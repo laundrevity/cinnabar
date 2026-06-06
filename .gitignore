@@ -1,0 +1,37 @@
+# --- Node / Showdown ---
+node_modules/
+*.log
+npm-debug.log*
+
+# --- Python (in case the agent ends up in Python) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- ML artifacts ---
+# Trained weights, replays, and logs can get huge — keep them out of git.
+models/
+checkpoints/
+runs/
+wandb/
+replays/
+*.pt
+*.ckpt
+*.h5
+*.onnx
+
+# --- Data ---
+data/
+*.sqlite
+*.db
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
