@@ -135,6 +135,7 @@ async def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     print(f"Training {args.iters} iters x {args.batch} battles vs {args.opponent}. Saving to {out}/")
 
+    best_md = -1.0  # track the best vs-maxdamage eval so noise can't lose our peak
     for it in range(1, args.iters + 1):
         policy.train()
         policy.reset_buffer()
@@ -168,6 +169,10 @@ async def main() -> None:
             wr_rng = await eval_winrate(policy, learner, rng, args.eval_battles)
             wr_md = await eval_winrate(policy, learner, maxdmg, args.eval_battles)
             print(f"         eval (greedy) | vs random {wr_rng:5.1f}% | vs maxdmg {wr_md:5.1f}%")
+            if wr_md > best_md:
+                best_md = wr_md
+                torch.save(net.state_dict(), out / "pg_best.pt")
+                print(f"         new best vs maxdmg {wr_md:.1f}% -> {out / 'pg_best.pt'}")
 
         if it % args.ckpt_every == 0 or it == args.iters:
             path = out / f"pg_iter{it}.pt"
