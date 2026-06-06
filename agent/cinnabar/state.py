@@ -69,3 +69,4 @@ class BattleState:
     opponent_active: Optional[ActivePokemon]
     available_actions: list[Action]
     force_switch: bool = False
+    battle_tag: Optional[str] = None  # used to group trajectory steps by battle

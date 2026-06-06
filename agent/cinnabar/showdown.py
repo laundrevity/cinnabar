@@ -74,6 +74,7 @@ class PolicyPlayer(Player):
             opponent_active=self._mon_view(battle.opponent_active_pokemon),
             available_actions=actions,
             force_switch=bool(getattr(battle, "force_switch", False)),
+            battle_tag=getattr(battle, "battle_tag", None),
         )
         return state, targets
 

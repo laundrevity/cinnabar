@@ -5,6 +5,7 @@ description = "AI agent that plays Pokémon battles on Pokémon Showdown (Gen 1 
 requires-python = ">=3.10"
 dependencies = [
     "poke-env",
+    "torch",
 ]
 
 # No [build-system] on purpose: this is a uv "virtual" project. uv manages the

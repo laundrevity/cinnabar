@@ -9,14 +9,17 @@ WebSocket protocol and battle-state tracking).
 The package is split so the decision-making core never touches poke-env:
 
 ```
-pyproject.toml # uv project: deps (poke-env) + dev group (pytest, ruff)
+pyproject.toml # uv project: deps (poke-env, torch) + dev group (pytest, ruff)
 cinnabar/
   state.py     # our BattleState + Action types        (no poke-env)
   policy.py    # Policy ABC + RandomPolicy + MaxDamagePolicy  (no poke-env)
+  encoding.py  # BattleState -> feature vectors         (dependency-free)
   showdown.py  # PolicyPlayer: the poke-env adapter     (the only poke-env code)
+  rl/          # PyTorch agent: net.py, agent.py (PGPolicy), returns.py (torch-free)
 play.py        # Phase 0: accept human challenges in Gen 1 OU
 smoke_test.py  # bot-vs-bot sanity check, watchable in the browser
 evaluate.py    # win-rate harness: policy A vs policy B over N games
+train.py       # Phase 2: REINFORCE-with-baseline training loop
 tests/         # pytest for the engine-free core
 ```
 
@@ -58,6 +61,10 @@ uv run python play.py
 # 3. Phase 1 yardstick — does max-damage beat random? (server running)
 uv run python evaluate.py            # ~100 games, prints win rate
 
+# 4. Phase 2 — train the RL agent (server running; first `uv sync` installs torch)
+uv run python train.py --smoke       # tiny run, just checks the loop works
+uv run python train.py               # real run; checkpoints to models/
+
 # tests / lint (engine-free core; no server needed)
 uv run pytest
 uv run ruff check
@@ -70,6 +77,7 @@ moves.
 
 ## Status
 
-Phase 1: `RandomPolicy` plus a type-aware `MaxDamagePolicy` baseline, with
-`evaluate.py` to measure win rate between any two policies. Next: reinforcement
-learning. See `../docs/roadmap.md`.
+Phase 2: a custom PyTorch RL agent (`cinnabar/rl/`) trained by REINFORCE-with-
+baseline on a sparse win/loss reward, plus `RandomPolicy` and `MaxDamagePolicy`
+baselines and `evaluate.py`. The RL agent is just another `Policy`, so it plays,
+evaluates, and (soon) battles humans through the same path. See `../docs/roadmap.md`.
