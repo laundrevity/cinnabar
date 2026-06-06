@@ -1,20 +1,16 @@
 """Our own representation of a battle state and the actions available in it.
 
 This module has **no** poke-env dependency on purpose. The Showdown adapter
-(`showdown.py`) is responsible for translating poke-env's `Battle` object into
-these types, and for translating a chosen `Action` back into a Showdown order.
+(`showdown.py`) translates poke-env's `Battle` into these types and a chosen
+`Action` back into a Showdown order.
 
-Keeping this seam means: (a) agents are written against a stable, minimal
-interface we control, and (b) if we ever replace poke-env (e.g. with
-`@pkmn/engine`), only the adapter changes.
-
-For Phase 0 (random play) this representation is intentionally thin. It will
-grow as the agent needs more signal (boosts, hazards, move PP, type info, etc.).
+Keeping this seam means agents are written against a stable interface we control,
+and swapping the engine later only touches the adapter.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
@@ -36,18 +32,22 @@ class Action:
     index: int
     type: ActionType
     label: str
-    # Descriptive metadata (plain values, no poke-env types). Populated for the
-    # relevant action type; the rest stay None.
+    # Move metadata (None for switches).
     move_id: Optional[str] = None
     base_power: Optional[float] = None
     species: Optional[str] = None
-    # Move facts used by damage-aware policies (None for switches).
     move_type: Optional[str] = None  # e.g. "ICE", "NORMAL"
     category: Optional[str] = None  # "PHYSICAL" | "SPECIAL" | "STATUS"
     accuracy: Optional[float] = None
-    # Type effectiveness of this move vs the *current* opponent active, looked up
-    # from the game's type chart by the adapter (a fact, like HP). Treat None as 1.0.
+    # Type effectiveness of this move vs the current opponent active (a fact from
+    # the type chart, like HP). Treat None as 1.0.
     type_multiplier: Optional[float] = None
+    # Switch metadata (None for moves): what we'd be switching into.
+    target_hp_fraction: Optional[float] = None
+    target_statused: Optional[bool] = None
+    # How hard the opponent active's types hit this switch target (incoming danger;
+    # higher = riskier switch). None when there's no opponent to compare to.
+    incoming_multiplier: Optional[float] = None
 
 
 @dataclass
@@ -61,6 +61,17 @@ class ActivePokemon:
 
 
 @dataclass
+class TeamMon:
+    """A team member (ours, or a revealed opponent), for team-state features."""
+
+    species: str
+    hp_fraction: float
+    fainted: bool
+    status: Optional[str] = None
+    active: bool = False
+
+
+@dataclass
 class BattleState:
     """What a policy sees on a given turn."""
 
@@ -69,4 +80,6 @@ class BattleState:
     opponent_active: Optional[ActivePokemon]
     available_actions: list[Action]
     force_switch: bool = False
-    battle_tag: Optional[str] = None  # used to group trajectory steps by battle
+    battle_tag: Optional[str] = None  # groups trajectory steps by battle
+    team: list[TeamMon] = field(default_factory=list)  # our full team
+    opponent_team: list[TeamMon] = field(default_factory=list)  # opponent's *revealed* mons

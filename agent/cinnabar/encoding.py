@@ -1,8 +1,7 @@
 """Turn a BattleState into numbers — the observation design for the RL agent.
 
-Deliberately dependency-free: returns plain Python floats (no numpy / torch), so
-it stays engine-free and unit-testable anywhere. The agent (Phase 2) converts
-these to tensors.
+Dependency-free (plain Python floats, no numpy/torch) so it stays engine-free and
+unit-testable anywhere. The agent converts these to tensors.
 
 Two halves, matching the per-action policy architecture:
 
@@ -11,11 +10,6 @@ Two halves, matching the per-action policy architecture:
 
 The network scores each action from (global ++ action) features, so we only ever
 featurize legal actions and never need a fixed action-index space or a mask.
-
-This is intentionally a *minimal* first encoding. It will grow (bench HP, move PP,
-revealed opponent team, hazards, boosts) as the agent needs more signal — each
-addition is a new feature here plus, where the fact isn't tracked yet, a field on
-BattleState/the adapter.
 """
 
 from __future__ import annotations
@@ -26,10 +20,14 @@ from .state import Action, ActionType, BattleState
 STATUS_ORDER = ["NONE", "BRN", "FRZ", "PAR", "PSN", "SLP"]
 _STATUS_INDEX = {name: i for i, name in enumerate(STATUS_ORDER)}
 
-GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2  # hps + two status one-hots + force_switch + turn
-ACTION_DIM = 7
+TEAM_SIZE = 6
 
-_MAX_BASE_POWER = 200.0  # normaliser; Self-Destruct (200) is about the ceiling in Gen 1
+# global = hps(2) + two status one-hots + force_switch + turn + team aggregates(4)
+GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4
+# action = move features(7) + switch-target features(3)
+ACTION_DIM = 7 + 3
+
+_MAX_BASE_POWER = 200.0  # Self-Destruct (200) is about the Gen 1 ceiling
 _TURN_SCALE = 50.0
 
 
@@ -47,6 +45,12 @@ def encode_global(state: BattleState) -> list[float]:
     our_status = state.active.status if state.active else None
     opp_status = state.opponent_active.status if state.opponent_active else None
 
+    # Team-state aggregates: full info on our side, KO/reveal counts on theirs.
+    our_alive = sum(1 for m in state.team if not m.fainted) / TEAM_SIZE
+    our_hp_total = sum(m.hp_fraction for m in state.team) / TEAM_SIZE
+    opp_fainted = sum(1 for m in state.opponent_team if m.fainted) / TEAM_SIZE
+    opp_revealed = len(state.opponent_team) / TEAM_SIZE
+
     return [
         our_hp,
         opp_hp,
@@ -54,6 +58,10 @@ def encode_global(state: BattleState) -> list[float]:
         *_status_one_hot(opp_status),
         1.0 if state.force_switch else 0.0,
         min(state.turn / _TURN_SCALE, 1.0),
+        our_alive,
+        our_hp_total,
+        opp_fainted,
+        opp_revealed,
     ]
 
 
@@ -76,6 +84,12 @@ def encode_action(action: Action, state: BattleState) -> list[float]:
     if is_move and action.move_type and state.active and action.move_type in state.active.types:
         stab = 1.0
 
+    # Switch-target context (0 for moves): what we'd be switching into and how
+    # dangerous the incoming matchup is.
+    target_hp = action.target_hp_fraction or 0.0
+    target_statused = 1.0 if action.target_statused else 0.0
+    incoming = action.incoming_multiplier if action.incoming_multiplier is not None else 0.0
+
     return [
         1.0 if is_move else 0.0,
         1.0 if action.type == ActionType.SWITCH else 0.0,
@@ -84,6 +98,9 @@ def encode_action(action: Action, state: BattleState) -> list[float]:
         stab,
         1.0 if action.category == "STATUS" else 0.0,
         _accuracy(action.accuracy),
+        target_hp,
+        target_statused,
+        incoming,
     ]
 
 

@@ -8,7 +8,7 @@ from cinnabar.encoding import (
     encode_global,
     featurize,
 )
-from cinnabar.state import Action, ActionType, ActivePokemon, BattleState
+from cinnabar.state import Action, ActionType, ActivePokemon, BattleState, TeamMon
 
 
 def _move(index, move_id, base_power, move_type, type_multiplier=1.0, category="PHYSICAL", accuracy=1.0):
@@ -52,7 +52,7 @@ def test_global_encodes_hp_and_force_switch():
     g = encode_global(state)
     assert g[0] == 0.5  # our hp
     assert g[1] == 0.25  # opp hp
-    assert g[-2] == 1.0  # force_switch flag
+    assert g[14] == 1.0  # force_switch flag (index 14: after 2 hp + 12 status)
 
 
 def test_global_status_one_hot():
@@ -106,3 +106,36 @@ def test_featurize_shapes():
 def test_encoding_is_deterministic():
     state = _state(actions=[_move(0, "a", 40, "NORMAL")])
     assert featurize(state) == featurize(state)
+
+
+def test_team_aggregates_in_global():
+    team = [
+        TeamMon("Tauros", 1.0, fainted=False, active=True),
+        TeamMon("Chansey", 0.5, fainted=False),
+        TeamMon("Snorlax", 0.0, fainted=True),
+    ]
+    opp = [
+        TeamMon("Tauros", 0.3, fainted=False, active=True),
+        TeamMon("Alakazam", 0.0, fainted=True),
+    ]
+    state = BattleState(turn=1, active=None, opponent_active=None,
+                        available_actions=[], team=team, opponent_team=opp)
+    g = encode_global(state)
+    assert g[16] == 2 / 6    # our mons alive
+    assert g[17] == 1.5 / 6  # summed hp 1.0 + 0.5 + 0.0
+    assert g[18] == 1 / 6    # opp fainted
+    assert g[19] == 2 / 6    # opp revealed
+
+
+def test_switch_target_features():
+    sw = Action(0, ActionType.SWITCH, "switch:Chansey", species="Chansey",
+                target_hp_fraction=0.7, target_statused=True, incoming_multiplier=2.0)
+    a = encode_action(sw, _state())
+    assert a[7] == 0.7  # target hp
+    assert a[8] == 1.0  # target statused
+    assert a[9] == 2.0  # incoming danger multiplier
+
+
+def test_move_action_has_zero_switch_features():
+    a = encode_action(_move(0, "tackle", 40, "NORMAL"), _state())
+    assert a[7] == 0.0 and a[8] == 0.0 and a[9] == 0.0

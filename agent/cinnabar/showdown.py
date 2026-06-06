@@ -15,7 +15,7 @@ from __future__ import annotations
 from poke_env.player import Player
 
 from .policy import Policy
-from .state import Action, ActionType, ActivePokemon, BattleState
+from .state import Action, ActionType, ActivePokemon, BattleState, TeamMon
 
 
 class PolicyPlayer(Player):
@@ -64,6 +64,9 @@ class PolicyPlayer(Player):
                     type=ActionType.SWITCH,
                     label=f"switch:{mon.species}",
                     species=mon.species,
+                    target_hp_fraction=mon.current_hp_fraction,
+                    target_statused=mon.status is not None,
+                    incoming_multiplier=self._incoming_multiplier(battle, mon),
                 )
             )
             targets.append(mon)
@@ -75,6 +78,8 @@ class PolicyPlayer(Player):
             available_actions=actions,
             force_switch=bool(getattr(battle, "force_switch", False)),
             battle_tag=getattr(battle, "battle_tag", None),
+            team=[self._team_mon(m) for m in battle.team.values()],
+            opponent_team=[self._team_mon(m) for m in battle.opponent_team.values()],
         )
         return state, targets
 
@@ -89,13 +94,8 @@ class PolicyPlayer(Player):
             types=tuple(t.name for t in mon.types if t is not None),
         )
 
-    def _type_multiplier(self, battle, move) -> float | None:
-        """Type effectiveness of `move` against the current opponent active, using
-        the format's type chart. Returns None when there's no opponent to compare
-        against (treated as 1.0 by policies)."""
-        opponent = battle.opponent_active_pokemon
-        if opponent is None or move.type is None:
-            return None
+    def _chart(self, battle):
+        """The format's type chart, lazily fetched and cached per generation."""
         gen = getattr(battle, "gen", 1)
         chart = self._type_charts.get(gen)
         if chart is None:
@@ -103,4 +103,35 @@ class PolicyPlayer(Player):
 
             chart = GenData.from_gen(gen).type_chart
             self._type_charts[gen] = chart
-        return move.type.damage_multiplier(*opponent.types, type_chart=chart)
+        return chart
+
+    def _type_multiplier(self, battle, move) -> float | None:
+        """Type effectiveness of `move` against the current opponent active.
+        Returns None when there's no opponent to compare against (1.0 to policies)."""
+        opponent = battle.opponent_active_pokemon
+        if opponent is None or move.type is None:
+            return None
+        return move.type.damage_multiplier(*opponent.types, type_chart=self._chart(battle))
+
+    def _incoming_multiplier(self, battle, mon) -> float | None:
+        """Worst-case effectiveness of the opponent active's types against `mon`
+        (a switch target) — how dangerous it is to switch this Pokémon in."""
+        opponent = battle.opponent_active_pokemon
+        if opponent is None:
+            return None
+        chart = self._chart(battle)
+        best = 0.0
+        for t in opponent.types:
+            if t is not None:
+                best = max(best, t.damage_multiplier(*mon.types, type_chart=chart))
+        return best
+
+    @staticmethod
+    def _team_mon(mon) -> TeamMon:
+        return TeamMon(
+            species=mon.species,
+            hp_fraction=mon.current_hp_fraction,
+            fainted=bool(mon.fainted),
+            status=mon.status.name if mon.status else None,
+            active=bool(getattr(mon, "active", False)),
+        )

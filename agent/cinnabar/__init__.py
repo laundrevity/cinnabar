@@ -6,7 +6,7 @@ poke-env / Showdown dependency: agents reason over our own ``BattleState`` and
 adapter), so swapping the interface later means rewriting one file, not the agent.
 """
 
-from .state import Action, ActionType, ActivePokemon, BattleState
+from .state import Action, ActionType, ActivePokemon, BattleState, TeamMon
 from .policy import MaxDamagePolicy, Policy, RandomPolicy
 
 __all__ = [
@@ -14,6 +14,7 @@ __all__ = [
     "ActionType",
     "ActivePokemon",
     "BattleState",
+    "TeamMon",
     "Policy",
     "RandomPolicy",
     "MaxDamagePolicy",

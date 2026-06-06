@@ -58,8 +58,9 @@ uv run python smoke_test.py
 # 2. Play against it yourself
 uv run python play.py
 
-# 3. Phase 1 yardstick — does max-damage beat random? (server running)
-uv run python evaluate.py            # ~100 games, prints win rate
+# 3. Compare policies — baselines or a trained checkpoint (server running)
+uv run python evaluate.py                                              # maxdamage vs random
+uv run python evaluate.py --a pg --b maxdamage --checkpoint models/pg_best.pt -n 500
 
 # 4. Phase 2 — train the RL agent (server running; first `uv sync` installs torch)
 uv run python train.py --smoke       # tiny run, just checks the loop works
