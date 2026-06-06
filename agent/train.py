@@ -36,9 +36,10 @@ from cinnabar.rl.agent import PGPolicy
 from cinnabar.rl.net import ActionScorer
 from cinnabar.rl.returns import discounted_returns, standardize
 from cinnabar.showdown import PolicyPlayer
+from cinnabar.teams import build_random_teambuilder, load_team_strings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TEAM = (REPO_ROOT / "teams" / "gen1ou-sample.txt").read_text()
+TEAMS_DIR = REPO_ROOT / "teams"
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,6 +69,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--ckpt-every", type=int, default=10)
     p.add_argument("--out", default="models")
     p.add_argument("--init", default=None, help="checkpoint to load weights from (for curriculum)")
+    p.add_argument("--teams-dir", default=str(TEAMS_DIR),
+                   help="dir of Showdown team .txt files; a random one is used per battle")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
     p.add_argument("--smoke", action="store_true", help="tiny run to check the loop works")
@@ -156,9 +159,9 @@ def ppo_update(net, optimizer, steps, returns, *, epochs, minibatch_size, clip,
     return info
 
 
-def make_player(policy, concurrency):
+def make_player(policy, concurrency, team):
     return PolicyPlayer(
-        policy=policy, battle_format="gen1ou", team=TEAM, max_concurrent_battles=concurrency
+        policy=policy, battle_format="gen1ou", team=team, max_concurrent_battles=concurrency
     )
 
 
@@ -181,9 +184,10 @@ async def main() -> None:
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
     policy = PGPolicy(net, device=args.device)
 
-    learner = make_player(policy, args.concurrency)
-    maxdmg = make_player(MaxDamagePolicy(), args.concurrency)
-    rng = make_player(RandomPolicy(), args.concurrency)
+    teambuilder = build_random_teambuilder(load_team_strings(args.teams_dir))
+    learner = make_player(policy, args.concurrency, teambuilder)
+    maxdmg = make_player(MaxDamagePolicy(), args.concurrency, teambuilder)
+    rng = make_player(RandomPolicy(), args.concurrency, teambuilder)
 
     opp_net = None
     if args.opponent == "self":
@@ -191,7 +195,7 @@ async def main() -> None:
         opp_net.load_state_dict(net.state_dict())  # opponent starts as a copy of the learner
         opp_policy = PGPolicy(opp_net, device=args.device)
         opp_policy.record = False  # samples for diversity; never trains
-        train_opp = make_player(opp_policy, args.concurrency)
+        train_opp = make_player(opp_policy, args.concurrency, teambuilder)
     elif args.opponent == "maxdamage":
         train_opp = maxdmg
     else:

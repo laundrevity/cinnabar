@@ -19,9 +19,10 @@ from poke_env import AccountConfiguration
 
 from cinnabar.policy import RandomPolicy
 from cinnabar.showdown import PolicyPlayer
+from cinnabar.teams import build_random_teambuilder, load_team_strings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TEAM_PATH = REPO_ROOT / "teams" / "gen1ou-sample.txt"
+TEAMS_DIR = REPO_ROOT / "teams"
 
 
 def build_policy(args):
@@ -52,10 +53,11 @@ async def main() -> None:
                         help="PG checkpoint to play (default: random bot)")
     parser.add_argument("--hidden", type=int, default=64, help="must match the trained net")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--teams-dir", default=str(TEAMS_DIR), help="dir of team .txt files (random per battle)")
     args = parser.parse_args()
 
     policy, kind = build_policy(args)
-    team = TEAM_PATH.read_text()
+    team = build_random_teambuilder(load_team_strings(args.teams_dir))
     bot = PolicyPlayer(
         policy=policy,
         account_configuration=AccountConfiguration(args.username, None),

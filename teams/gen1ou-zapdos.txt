@@ -1,0 +1,35 @@
+Zapdos
+- Thunderbolt
+- Drill Peck
+- Thunder Wave
+- Agility
+
+Chansey (F)
+- Ice Beam
+- Thunderbolt
+- Thunder Wave
+- Soft-Boiled
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
+
+Snorlax
+- Body Slam
+- Earthquake
+- Self-Destruct
+- Rest
+
+Starmie
+- Psychic
+- Blizzard
+- Thunderbolt
+- Recover
+
+Rhydon
+- Earthquake
+- Rock Slide
+- Body Slam
+- Substitute

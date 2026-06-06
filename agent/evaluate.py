@@ -18,9 +18,10 @@ from pathlib import Path
 
 from cinnabar.policy import MaxDamagePolicy, RandomPolicy
 from cinnabar.showdown import PolicyPlayer
+from cinnabar.teams import build_random_teambuilder, load_team_strings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TEAM = (REPO_ROOT / "teams" / "gen1ou-sample.txt").read_text()
+TEAMS_DIR = REPO_ROOT / "teams"
 CHOICES = ["random", "maxdamage", "pg"]
 
 
@@ -55,9 +56,11 @@ async def main() -> None:
     p.add_argument("--checkpoint", default=None, help="PG checkpoint path (when a side is 'pg')")
     p.add_argument("--hidden", type=int, default=64, help="must match the trained net")
     p.add_argument("--device", default="cpu")
+    p.add_argument("--teams-dir", default=str(TEAMS_DIR), help="dir of team .txt files (random per battle)")
     args = p.parse_args()
 
-    common = dict(battle_format="gen1ou", team=TEAM, max_concurrent_battles=10)
+    teambuilder = build_random_teambuilder(load_team_strings(args.teams_dir))
+    common = dict(battle_format="gen1ou", team=teambuilder, max_concurrent_battles=10)
     a = PolicyPlayer(policy=build_policy(args.a, args), **common)
     b = PolicyPlayer(policy=build_policy(args.b, args), **common)
 

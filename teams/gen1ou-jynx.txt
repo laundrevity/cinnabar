@@ -1,8 +1,14 @@
-Alakazam
+Jynx (F)
+- Lovely Kiss
+- Blizzard
 - Psychic
-- Thunder Wave
-- Seismic Toss
-- Recover
+- Rest
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
 
 Chansey (F)
 - Ice Beam
@@ -10,26 +16,20 @@ Chansey (F)
 - Thunder Wave
 - Soft-Boiled
 
-Exeggutor
-- Hyper Beam
-- Psychic
-- Sleep Powder
-- Explosion
-
 Snorlax
 - Body Slam
 - Earthquake
 - Hyper Beam
 - Self-Destruct
 
-Tauros (M)
-- Body Slam
-- Earthquake
-- Hyper Beam
+Lapras
 - Blizzard
+- Thunderbolt
+- Body Slam
+- Confuse Ray
 
 Starmie
 - Thunderbolt
 - Ice Beam
-- Thunder Wave
 - Recover
+- Thunder Wave

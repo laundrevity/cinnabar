@@ -15,6 +15,7 @@ cinnabar/
   policy.py    # Policy ABC + RandomPolicy + MaxDamagePolicy  (no poke-env)
   encoding.py  # BattleState -> feature vectors         (dependency-free)
   showdown.py  # PolicyPlayer: the poke-env adapter     (the only poke-env code)
+  teams.py     # team-pool loader + random-per-battle Teambuilder
   rl/          # PyTorch agent: net.py, agent.py (PGPolicy), returns.py (torch-free)
 play.py        # Phase 0: accept human challenges in Gen 1 OU
 smoke_test.py  # bot-vs-bot sanity check, watchable in the browser
@@ -85,7 +86,7 @@ moves.
 
 Phase 3 (in progress): a custom PyTorch RL agent (`cinnabar/rl/`) trained by PPO
 (REINFORCE selectable via `--algo`) on a sparse win/loss reward, with per-switch and
-team-state observations. It beats the `MaxDamagePolicy` baseline; now training by
-**self-play** (`--opponent self`) against evolving snapshots of itself, measured
-against the random / max-damage yardsticks. The RL agent is just another `Policy`.
-See `../docs/roadmap.md`.
+team-state observations, by **self-play** (`--opponent self`) over a **pool of teams**
+(`../teams/`, a random one per battle) for generalization. Beats the `MaxDamagePolicy`
+baseline; measured against the random / max-damage yardsticks. The RL agent is just
+another `Policy`. See `../docs/roadmap.md`.

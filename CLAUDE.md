@@ -17,8 +17,9 @@ interface. The progression is deliberately incremental:
 - **Format: Gen 1 OU.** Chosen for mechanical simplicity — no abilities, no held items,
   small movepools, simpler type chart and status rules. This keeps the state/action space
   tractable while still being a real competitive format.
-- Gen 1 OU *does* include team-building. Early training should start from **fixed teams**
-  (see `teams/`) and treat team-building as a later, separable problem.
+- Gen 1 OU *does* include team-building. We train over a **pool of fixed teams** (`teams/`,
+  one chosen at random per battle via `agent/cinnabar/teams.py`) for generalization, and
+  treat team-building (the agent constructing its own team) as a later, separable problem.
 
 ## Architecture decisions (and the reasoning — don't relitigate without cause)
 
