@@ -33,7 +33,7 @@ from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM
 from cinnabar.policy import MaxDamagePolicy, RandomPolicy
 from cinnabar.rl.agent import PGPolicy
 from cinnabar.rl.net import ActionScorer
-from cinnabar.rl.returns import discounted_terminal_returns, standardize
+from cinnabar.rl.returns import discounted_returns, standardize
 from cinnabar.showdown import PolicyPlayer
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -49,6 +49,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--ent-coef", type=float, default=0.01)
     p.add_argument("--value-coef", type=float, default=0.5)
+    p.add_argument("--tie-reward", type=float, default=-1.0,
+                   help="reward for a turn-limit draw; -1 treats a stall as a loss")
+    p.add_argument("--step-penalty", type=float, default=0.0,
+                   help="per-turn penalty to discourage stalling (try 0.01 if stalls persist)")
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-battles", type=int, default=50)
@@ -87,10 +91,10 @@ def update(net, optimizer, steps, returns, value_coef, ent_coef, device) -> dict
     loss.backward()
     optimizer.step()
     return {
-        "loss": float(loss),
-        "policy_loss": float(policy_loss) / n,
-        "value_loss": float(value_loss) / n,
-        "entropy": float(entropy) / n,
+        "loss": loss.item(),
+        "policy_loss": policy_loss.item() / n,
+        "value_loss": value_loss.item() / n,
+        "entropy": entropy.item() / n,
     }
 
 
@@ -130,20 +134,28 @@ async def main() -> None:
         learner.reset_battles()
         await learner.battle_against(maxdmg, n_battles=args.batch)
 
-        steps, returns, wins, total = [], [], 0, 0
+        steps, returns, wins, ties, total = [], [], 0, 0, 0
         for tag, recs in policy.steps_by_battle.items():
             battle = learner.battles.get(tag)
-            if battle is None or battle.won is None:
-                continue
+            if battle is None or not battle.finished or not recs:
+                continue  # only skip genuinely unfinished battles
             total += 1
-            wins += 1 if battle.won else 0
-            reward = 1.0 if battle.won else -1.0
-            returns.extend(discounted_terminal_returns(len(recs), reward, args.gamma))
+            if battle.won is True:
+                wins += 1
+                reward = 1.0
+            elif battle.won is False:
+                reward = -1.0
+            else:  # turn-limit draw — a non-win, not a free pass
+                ties += 1
+                reward = args.tie_reward
+            rewards = [-args.step_penalty] * len(recs)
+            rewards[-1] += reward
+            returns.extend(discounted_returns(rewards, args.gamma))
             steps.extend(recs)
 
         info = update(net, optimizer, steps, returns, args.value_coef, args.ent_coef, args.device) if steps else {"loss": float("nan")}
         train_wr = 100.0 * wins / max(total, 1)
-        print(f"iter {it:4d} | train vs maxdmg {train_wr:5.1f}% | loss {info['loss']:+.3f} | steps {len(steps)}")
+        print(f"iter {it:4d} | train vs maxdmg {train_wr:5.1f}% | ties {ties:2d} | loss {info['loss']:+.3f} | steps {len(steps)}")
 
         if it % args.eval_every == 0:
             wr_rng = await eval_winrate(policy, learner, rng, args.eval_battles)

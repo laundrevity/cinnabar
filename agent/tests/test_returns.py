@@ -2,7 +2,7 @@
 
 import pytest
 
-from cinnabar.rl.returns import discounted_terminal_returns, standardize
+from cinnabar.rl.returns import discounted_returns, discounted_terminal_returns, standardize
 
 
 def test_undiscounted_returns_are_flat():
@@ -38,3 +38,22 @@ def test_standardize_constant_is_zeros():
 
 def test_standardize_empty():
     assert standardize([]) == []
+
+
+def test_discounted_returns_terminal_only():
+    # only a terminal reward -> matches the terminal-only helper
+    assert discounted_returns([0.0, 0.0, 1.0], 0.5) == pytest.approx([0.25, 0.5, 1.0])
+
+
+def test_discounted_returns_with_step_penalty():
+    # per-step penalty of 0.1 plus a +1 terminal, undiscounted
+    assert discounted_returns([-0.1, -0.1, 0.9], 1.0) == pytest.approx([0.7, 0.8, 0.9])
+
+
+def test_discounted_returns_matches_terminal_helper():
+    length, reward, gamma = 5, -1.0, 0.97
+    rewards = [0.0] * length
+    rewards[-1] = reward
+    assert discounted_returns(rewards, gamma) == pytest.approx(
+        discounted_terminal_returns(length, reward, gamma)
+    )
