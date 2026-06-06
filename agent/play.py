@@ -48,9 +48,13 @@ async def main() -> None:
 
     who = args.opponent or "anyone"
     print(
-        f"{args.username} online. Challenge '{args.username}' to a "
-        f"[{args.battle_format}] battle at http://localhost:8000  "
-        f"(accepting from: {who}). Ctrl-C to stop."
+        f"\n{args.username} is online (format: {args.battle_format}, accepting from: {who}).\n"
+        f"\nIt won't appear in any user list — challenge it by name:\n"
+        f"  1. Open http://localhost:8000 and build a {args.battle_format} team in the\n"
+        f"     Teambuilder (you can paste teams/gen1ou-sample.txt).\n"
+        f"  2. Type this into any chat box (e.g. the Lobby):\n"
+        f"         /challenge {args.username}, {args.battle_format}\n"
+        f"\nThe bot auto-accepts. Ctrl-C to stop.\n"
     )
     while True:
         await bot.accept_challenges(args.opponent, 1)

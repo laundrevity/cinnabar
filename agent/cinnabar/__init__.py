@@ -7,7 +7,7 @@ adapter), so swapping the interface later means rewriting one file, not the agen
 """
 
 from .state import Action, ActionType, ActivePokemon, BattleState
-from .policy import Policy, RandomPolicy
+from .policy import MaxDamagePolicy, Policy, RandomPolicy
 
 __all__ = [
     "Action",
@@ -16,4 +16,5 @@ __all__ = [
     "BattleState",
     "Policy",
     "RandomPolicy",
+    "MaxDamagePolicy",
 ]

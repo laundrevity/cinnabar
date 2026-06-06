@@ -41,6 +41,13 @@ class Action:
     move_id: Optional[str] = None
     base_power: Optional[float] = None
     species: Optional[str] = None
+    # Move facts used by damage-aware policies (None for switches).
+    move_type: Optional[str] = None  # e.g. "ICE", "NORMAL"
+    category: Optional[str] = None  # "PHYSICAL" | "SPECIAL" | "STATUS"
+    accuracy: Optional[float] = None
+    # Type effectiveness of this move vs the *current* opponent active, looked up
+    # from the game's type chart by the adapter (a fact, like HP). Treat None as 1.0.
+    type_multiplier: Optional[float] = None
 
 
 @dataclass
@@ -50,6 +57,7 @@ class ActivePokemon:
     species: str
     hp_fraction: float
     status: Optional[str] = None
+    types: tuple[str, ...] = ()  # e.g. ("WATER", "PSYCHIC")
 
 
 @dataclass

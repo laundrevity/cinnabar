@@ -22,6 +22,7 @@ class PolicyPlayer(Player):
     def __init__(self, policy: Policy, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._policy = policy
+        self._type_charts: dict = {}  # gen -> type chart, lazily cached
 
     def choose_move(self, battle):
         state, targets = self._build_state(battle)
@@ -48,6 +49,10 @@ class PolicyPlayer(Player):
                     label=move.id,
                     move_id=move.id,
                     base_power=move.base_power,
+                    move_type=move.type.name if move.type else None,
+                    category=move.category.name if move.category else None,
+                    accuracy=move.accuracy,
+                    type_multiplier=self._type_multiplier(battle, move),
                 )
             )
             targets.append(move)
@@ -80,4 +85,21 @@ class PolicyPlayer(Player):
             species=mon.species,
             hp_fraction=mon.current_hp_fraction,
             status=mon.status.name if mon.status else None,
+            types=tuple(t.name for t in mon.types if t is not None),
         )
+
+    def _type_multiplier(self, battle, move) -> float | None:
+        """Type effectiveness of `move` against the current opponent active, using
+        the format's type chart. Returns None when there's no opponent to compare
+        against (treated as 1.0 by policies)."""
+        opponent = battle.opponent_active_pokemon
+        if opponent is None or move.type is None:
+            return None
+        gen = getattr(battle, "gen", 1)
+        chart = self._type_charts.get(gen)
+        if chart is None:
+            from poke_env.data import GenData
+
+            chart = GenData.from_gen(gen).type_chart
+            self._type_charts[gen] = chart
+        return move.type.damage_multiplier(*opponent.types, type_chart=chart)

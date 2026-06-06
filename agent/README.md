@@ -12,10 +12,11 @@ The package is split so the decision-making core never touches poke-env:
 pyproject.toml # uv project: deps (poke-env) + dev group (pytest, ruff)
 cinnabar/
   state.py     # our BattleState + Action types        (no poke-env)
-  policy.py    # Policy ABC + RandomPolicy              (no poke-env)
+  policy.py    # Policy ABC + RandomPolicy + MaxDamagePolicy  (no poke-env)
   showdown.py  # PolicyPlayer: the poke-env adapter     (the only poke-env code)
 play.py        # Phase 0: accept human challenges in Gen 1 OU
 smoke_test.py  # bot-vs-bot sanity check, watchable in the browser
+evaluate.py    # win-rate harness: policy A vs policy B over N games
 tests/         # pytest for the engine-free core
 ```
 
@@ -54,6 +55,9 @@ uv run python smoke_test.py
 # 2. Play against it yourself
 uv run python play.py
 
+# 3. Phase 1 yardstick — does max-damage beat random? (server running)
+uv run python evaluate.py            # ~100 games, prints win rate
+
 # tests / lint (engine-free core; no server needed)
 uv run pytest
 uv run ruff check
@@ -66,5 +70,6 @@ moves.
 
 ## Status
 
-Phase 0 (random policy). Next: a heuristic `MaxDamagePolicy` baseline, then RL.
-See `../docs/roadmap.md`.
+Phase 1: `RandomPolicy` plus a type-aware `MaxDamagePolicy` baseline, with
+`evaluate.py` to measure win rate between any two policies. Next: reinforcement
+learning. See `../docs/roadmap.md`.
