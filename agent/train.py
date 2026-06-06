@@ -53,11 +53,14 @@ def parse_args() -> argparse.Namespace:
                    help="reward for a turn-limit draw; -1 treats a stall as a loss")
     p.add_argument("--step-penalty", type=float, default=0.0,
                    help="per-turn penalty to discourage stalling (try 0.01 if stalls persist)")
+    p.add_argument("--opponent", choices=["random", "maxdamage"], default="random",
+                   help="training opponent (curriculum: beat random first, then maxdamage)")
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-battles", type=int, default=50)
     p.add_argument("--ckpt-every", type=int, default=10)
     p.add_argument("--out", default="models")
+    p.add_argument("--init", default=None, help="checkpoint to load weights from (for curriculum)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
     p.add_argument("--smoke", action="store_true", help="tiny run to check the loop works")
@@ -117,22 +120,26 @@ async def main() -> None:
     torch.manual_seed(args.seed)
 
     net = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
+    if args.init:
+        net.load_state_dict(torch.load(args.init, map_location=args.device))
+        print(f"Initialized weights from {args.init}")
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
     policy = PGPolicy(net, device=args.device)
 
     learner = make_player(policy, args.concurrency)
     maxdmg = make_player(MaxDamagePolicy(), args.concurrency)
     rng = make_player(RandomPolicy(), args.concurrency)
+    train_opp = maxdmg if args.opponent == "maxdamage" else rng
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    print(f"Training {args.iters} iters x {args.batch} battles vs MaxDamage. Saving to {out}/")
+    print(f"Training {args.iters} iters x {args.batch} battles vs {args.opponent}. Saving to {out}/")
 
     for it in range(1, args.iters + 1):
         policy.train()
         policy.reset_buffer()
         learner.reset_battles()
-        await learner.battle_against(maxdmg, n_battles=args.batch)
+        await learner.battle_against(train_opp, n_battles=args.batch)
 
         steps, returns, wins, ties, total = [], [], 0, 0, 0
         for tag, recs in policy.steps_by_battle.items():
@@ -155,7 +162,7 @@ async def main() -> None:
 
         info = update(net, optimizer, steps, returns, args.value_coef, args.ent_coef, args.device) if steps else {"loss": float("nan")}
         train_wr = 100.0 * wins / max(total, 1)
-        print(f"iter {it:4d} | train vs maxdmg {train_wr:5.1f}% | ties {ties:2d} | loss {info['loss']:+.3f} | steps {len(steps)}")
+        print(f"iter {it:4d} | train vs {args.opponent:9s} {train_wr:5.1f}% | ties {ties:2d} | loss {info['loss']:+.3f} | steps {len(steps)}")
 
         if it % args.eval_every == 0:
             wr_rng = await eval_winrate(policy, learner, rng, args.eval_battles)
