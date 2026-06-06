@@ -62,9 +62,11 @@ uv run python play.py
 uv run python evaluate.py                                              # maxdamage vs random
 uv run python evaluate.py --a pg --b maxdamage --checkpoint models/pg_best.pt -n 500
 
-# 4. Phase 2 — train the RL agent (server running; first `uv sync` installs torch)
-uv run python train.py --smoke       # tiny run, just checks the loop works
-uv run python train.py               # real run; checkpoints to models/
+# 4. Phase 2 — train the RL agent (PPO; server running; first `uv sync` installs torch)
+uv run python train.py --smoke                                            # tiny run, checks the loop
+uv run python train.py --opponent random --step-penalty 0.01 --iters 200  # warm up vs random
+uv run python train.py --opponent maxdamage --init models/pg_best.pt \
+    --step-penalty 0.01 --iters 200 --out models_md                       # then push vs the baseline
 
 # tests / lint (engine-free core; no server needed)
 uv run pytest
@@ -78,7 +80,8 @@ moves.
 
 ## Status
 
-Phase 2: a custom PyTorch RL agent (`cinnabar/rl/`) trained by REINFORCE-with-
-baseline on a sparse win/loss reward, plus `RandomPolicy` and `MaxDamagePolicy`
-baselines and `evaluate.py`. The RL agent is just another `Policy`, so it plays,
-evaluates, and (soon) battles humans through the same path. See `../docs/roadmap.md`.
+Phase 2: a custom PyTorch RL agent (`cinnabar/rl/`) trained by PPO (REINFORCE also
+selectable via `--algo`) on a sparse win/loss reward, with per-switch and team-state
+observations. Reaches parity with the `MaxDamagePolicy` baseline; PPO + curriculum
+is the push to clear it. The RL agent is just another `Policy`, so it plays and
+evaluates through the same path. See `../docs/roadmap.md`.

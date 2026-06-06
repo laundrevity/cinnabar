@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import random
 from pathlib import Path
 
 import torch
@@ -49,6 +50,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--ent-coef", type=float, default=0.01)
     p.add_argument("--value-coef", type=float, default=0.5)
+    p.add_argument("--algo", choices=["ppo", "reinforce"], default="ppo")
+    p.add_argument("--epochs", type=int, default=4, help="PPO update epochs per batch")
+    p.add_argument("--minibatch-size", type=int, default=256, help="PPO minibatch size (steps)")
+    p.add_argument("--clip", type=float, default=0.2, help="PPO clip range")
     p.add_argument("--tie-reward", type=float, default=-1.0,
                    help="reward for a turn-limit draw; -1 treats a stall as a loss")
     p.add_argument("--step-penalty", type=float, default=0.0,
@@ -101,6 +106,54 @@ def update(net, optimizer, steps, returns, value_coef, ent_coef, device) -> dict
     }
 
 
+def ppo_update(net, optimizer, steps, returns, *, epochs, minibatch_size, clip,
+               value_coef, ent_coef, device) -> dict:
+    """Clipped PPO over the collected batch.
+
+    Advantages (return - rollout value, standardized) and behavior log-probs are
+    fixed from the rollout; we take several epochs of minibatched clipped-surrogate
+    steps, which extracts far more signal per battle than a single REINFORCE step.
+    """
+    values_old = [s.value for s in steps]
+    advantages = standardize([r - v for r, v in zip(returns, values_old)])
+
+    order = list(range(len(steps)))
+    info = {"loss": float("nan")}
+    for _ in range(epochs):
+        random.shuffle(order)
+        for start in range(0, len(order), minibatch_size):
+            mb = order[start:start + minibatch_size]
+            optimizer.zero_grad()
+            policy_loss = torch.zeros((), device=device)
+            value_loss = torch.zeros((), device=device)
+            entropy = torch.zeros((), device=device)
+            for i in mb:
+                rec = steps[i]
+                g = torch.tensor(rec.global_feats, dtype=torch.float32, device=device)
+                a = torch.tensor(rec.action_feats, dtype=torch.float32, device=device)
+                logits = net.score_actions(g, a)
+                dist = torch.distributions.Categorical(logits=logits)
+                logp = dist.log_prob(torch.tensor(rec.chosen, device=device))
+                value = net.value(g)
+                ratio = torch.exp(logp - rec.behavior_logp)
+                adv = advantages[i]
+                clipped = torch.clamp(ratio, 1.0 - clip, 1.0 + clip) * adv
+                policy_loss = policy_loss - torch.min(ratio * adv, clipped)
+                value_loss = value_loss + (value - returns[i]) ** 2
+                entropy = entropy + dist.entropy()
+            m = max(len(mb), 1)
+            loss = (policy_loss + value_coef * value_loss - ent_coef * entropy) / m
+            loss.backward()
+            optimizer.step()
+            info = {
+                "loss": loss.item(),
+                "policy_loss": policy_loss.item() / m,
+                "value_loss": value_loss.item() / m,
+                "entropy": entropy.item() / m,
+            }
+    return info
+
+
 def make_player(policy, concurrency):
     return PolicyPlayer(
         policy=policy, battle_format="gen1ou", team=TEAM, max_concurrent_battles=concurrency
@@ -133,7 +186,7 @@ async def main() -> None:
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    print(f"Training {args.iters} iters x {args.batch} battles vs {args.opponent}. Saving to {out}/")
+    print(f"Training {args.iters} iters x {args.batch} battles vs {args.opponent} [{args.algo}]. Saving to {out}/")
 
     best_md = -1.0  # track the best vs-maxdamage eval so noise can't lose our peak
     for it in range(1, args.iters + 1):
@@ -161,7 +214,14 @@ async def main() -> None:
             returns.extend(discounted_returns(rewards, args.gamma))
             steps.extend(recs)
 
-        info = update(net, optimizer, steps, returns, args.value_coef, args.ent_coef, args.device) if steps else {"loss": float("nan")}
+        if not steps:
+            info = {"loss": float("nan")}
+        elif args.algo == "ppo":
+            info = ppo_update(net, optimizer, steps, returns, epochs=args.epochs,
+                              minibatch_size=args.minibatch_size, clip=args.clip,
+                              value_coef=args.value_coef, ent_coef=args.ent_coef, device=args.device)
+        else:
+            info = update(net, optimizer, steps, returns, args.value_coef, args.ent_coef, args.device)
         train_wr = 100.0 * wins / max(total, 1)
         print(f"iter {it:4d} | train vs {args.opponent:9s} {train_wr:5.1f}% | ties {ties:2d} | loss {info['loss']:+.3f} | steps {len(steps)}")
 

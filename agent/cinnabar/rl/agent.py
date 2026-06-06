@@ -26,6 +26,8 @@ class StepRecord:
     global_feats: list[float]
     action_feats: list[list[float]]
     chosen: int
+    behavior_logp: float = 0.0  # log-prob of `chosen` under the rollout policy (PPO ratio)
+    value: float = 0.0  # value estimate at rollout time (PPO baseline)
 
 
 class PGPolicy(Policy):
@@ -55,10 +57,15 @@ class PGPolicy(Policy):
             logits = self.net.score_actions(g, a)
 
         if self.training:
-            idx = int(torch.distributions.Categorical(logits=logits).sample().item())
+            with torch.no_grad():
+                dist = torch.distributions.Categorical(logits=logits)
+                sample = dist.sample()
+                idx = int(sample.item())
+                behavior_logp = float(dist.log_prob(sample))
+                value = float(self.net.value(g))
             tag = state.battle_tag or "_unknown"
             self.steps_by_battle.setdefault(tag, []).append(
-                StepRecord(global_feats, action_feats, idx)
+                StepRecord(global_feats, action_feats, idx, behavior_logp, value)
             )
         else:
             idx = int(torch.argmax(logits).item())
