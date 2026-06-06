@@ -32,7 +32,9 @@ cd "$SUBMODULE_PATH"
 npm install
 
 echo "==> Building Showdown"
-node pokemon-showdown build || true
+# Compile TypeScript -> dist/. (The server also auto-builds on first start, so a
+# failure here is non-fatal.)
+npm run build || node build || true
 
 echo ""
 echo "==> Done. Start a local server for training/play with:"
