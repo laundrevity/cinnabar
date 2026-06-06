@@ -24,8 +24,8 @@ TEAM_SIZE = 6
 
 # global = hps(2) + two status one-hots + force_switch + turn + team aggregates(4)
 GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4
-# action = move features(7) + switch-target features(3)
-ACTION_DIM = 7 + 3
+# action = move features(7) + switch-target features(3) + fixed-damage(1)
+ACTION_DIM = 7 + 3 + 1
 
 _MAX_BASE_POWER = 200.0  # Self-Destruct (200) is about the Gen 1 ceiling
 _TURN_SCALE = 50.0
@@ -101,6 +101,7 @@ def encode_action(action: Action, state: BattleState) -> list[float]:
         target_hp,
         target_statused,
         incoming,
+        (action.fixed_damage or 0.0) / 100.0,  # Seismic Toss/Night Shade = 1.0
     ]
 
 

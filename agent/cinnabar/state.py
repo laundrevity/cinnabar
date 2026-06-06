@@ -42,6 +42,7 @@ class Action:
     # Type effectiveness of this move vs the current opponent active (a fact from
     # the type chart, like HP). Treat None as 1.0.
     type_multiplier: Optional[float] = None
+    fixed_damage: Optional[float] = None  # guaranteed HP for fixed-damage moves (Seismic Toss, Night Shade)
     # Switch metadata (None for moves): what we'd be switching into.
     target_hp_fraction: Optional[float] = None
     target_statused: Optional[bool] = None

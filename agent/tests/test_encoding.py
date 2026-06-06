@@ -139,3 +139,11 @@ def test_switch_target_features():
 def test_move_action_has_zero_switch_features():
     a = encode_action(_move(0, "tackle", 40, "NORMAL"), _state())
     assert a[7] == 0.0 and a[8] == 0.0 and a[9] == 0.0
+
+
+def test_fixed_damage_feature():
+    seismic = Action(0, ActionType.MOVE, "seismictoss", move_id="seismictoss",
+                     base_power=0, move_type="FIGHTING", fixed_damage=100.0)
+    assert encode_action(seismic, _state())[10] == 1.0  # 100 / 100
+    # a normal damaging move has no fixed-damage component
+    assert encode_action(_move(0, "psychic", 90, "PSYCHIC"), _state())[10] == 0.0

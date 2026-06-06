@@ -53,6 +53,7 @@ class PolicyPlayer(Player):
                     category=move.category.name if move.category else None,
                     accuracy=move.accuracy,
                     type_multiplier=self._type_multiplier(battle, move),
+                    fixed_damage=self._fixed_damage(move),
                 )
             )
             targets.append(move)
@@ -125,6 +126,20 @@ class PolicyPlayer(Player):
             if t is not None:
                 best = max(best, t.damage_multiplier(*mon.types, type_chart=chart))
         return best
+
+    @staticmethod
+    def _fixed_damage(move):
+        """Guaranteed HP damage for fixed-damage moves (Seismic Toss, Night Shade,
+        Dragon Rage...), which report base_power 0. 'level' -> 100 (we play at L100)."""
+        d = getattr(move, "damage", None)
+        if not d:
+            return None
+        if d == "level":
+            return 100.0
+        try:
+            return float(d)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _team_mon(mon) -> TeamMon:
