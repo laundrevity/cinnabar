@@ -35,6 +35,7 @@ class PGPolicy(Policy):
         self.net = net
         self.device = device
         self.training = True
+        self.record = True  # set False for a sampling opponent (self-play) that never trains
         self.steps_by_battle: dict[str, list[StepRecord]] = {}
 
     def train(self) -> None:
@@ -61,12 +62,14 @@ class PGPolicy(Policy):
                 dist = torch.distributions.Categorical(logits=logits)
                 sample = dist.sample()
                 idx = int(sample.item())
-                behavior_logp = float(dist.log_prob(sample))
-                value = float(self.net.value(g))
-            tag = state.battle_tag or "_unknown"
-            self.steps_by_battle.setdefault(tag, []).append(
-                StepRecord(global_feats, action_feats, idx, behavior_logp, value)
-            )
+                if self.record:
+                    behavior_logp = float(dist.log_prob(sample))
+                    value = float(self.net.value(g))
+            if self.record:
+                tag = state.battle_tag or "_unknown"
+                self.steps_by_battle.setdefault(tag, []).append(
+                    StepRecord(global_feats, action_feats, idx, behavior_logp, value)
+                )
         else:
             idx = int(torch.argmax(logits).item())
 

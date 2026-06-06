@@ -58,8 +58,10 @@ def parse_args() -> argparse.Namespace:
                    help="reward for a turn-limit draw; -1 treats a stall as a loss")
     p.add_argument("--step-penalty", type=float, default=0.0,
                    help="per-turn penalty to discourage stalling (try 0.01 if stalls persist)")
-    p.add_argument("--opponent", choices=["random", "maxdamage"], default="random",
-                   help="training opponent (curriculum: beat random first, then maxdamage)")
+    p.add_argument("--opponent", choices=["random", "maxdamage", "self"], default="random",
+                   help="training opponent (curriculum: random -> maxdamage -> self-play)")
+    p.add_argument("--snapshot-every", type=int, default=10,
+                   help="self-play: refresh the opponent snapshot every N iters")
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-battles", type=int, default=50)
@@ -182,7 +184,18 @@ async def main() -> None:
     learner = make_player(policy, args.concurrency)
     maxdmg = make_player(MaxDamagePolicy(), args.concurrency)
     rng = make_player(RandomPolicy(), args.concurrency)
-    train_opp = maxdmg if args.opponent == "maxdamage" else rng
+
+    opp_net = None
+    if args.opponent == "self":
+        opp_net = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
+        opp_net.load_state_dict(net.state_dict())  # opponent starts as a copy of the learner
+        opp_policy = PGPolicy(opp_net, device=args.device)
+        opp_policy.record = False  # samples for diversity; never trains
+        train_opp = make_player(opp_policy, args.concurrency)
+    elif args.opponent == "maxdamage":
+        train_opp = maxdmg
+    else:
+        train_opp = rng
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -238,6 +251,9 @@ async def main() -> None:
             path = out / f"pg_iter{it}.pt"
             torch.save(net.state_dict(), path)
             print(f"         saved {path}")
+
+        if opp_net is not None and it % args.snapshot_every == 0:
+            opp_net.load_state_dict(net.state_dict())  # opponent catches up to the learner
 
 
 if __name__ == "__main__":
