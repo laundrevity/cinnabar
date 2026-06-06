@@ -71,6 +71,8 @@ uv run python train.py --opponent maxdamage --init models/pg_best.pt \
     --step-penalty 0.01 --iters 200 --out models_md                       # then push vs the baseline
 uv run python train.py --opponent self --init models_md/pg_best.pt \
     --step-penalty 0.01 --iters 300 --out models_sp                       # Phase 3: self-play
+uv run python train.py --opponent league --reward shaped --init models/pg_best.pt \
+    --hidden 256 --concurrency 30 --iters 600 --out models_lg             # league + shaped reward
 
 # tests / lint (engine-free core; no server needed)
 uv run pytest
@@ -86,7 +88,8 @@ moves.
 
 Phase 3 (in progress): a custom PyTorch RL agent (`cinnabar/rl/`) trained by PPO
 (REINFORCE selectable via `--algo`) on a sparse win/loss reward, with per-switch and
-team-state observations, by **self-play** (`--opponent self`) over a **pool of teams**
-(`../teams/`, a random one per battle) for generalization. Beats the `MaxDamagePolicy`
-baseline; measured against the random / max-damage yardsticks. The RL agent is just
-another `Policy`. See `../docs/roadmap.md`.
+team-state observations, by **self-play** — single snapshot (`--opponent self`) or a **snapshot league**
+(`--opponent league`) to avoid cycling — over a **pool of teams** (`../teams/`, random
+per battle), with sparse or **shaped** reward (`--reward shaped`: win/loss + material).
+Beats the `MaxDamagePolicy` baseline; measured against the random / max-damage yardsticks.
+The RL agent is just another `Policy`. See `../docs/roadmap.md`.

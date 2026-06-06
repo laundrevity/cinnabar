@@ -8,6 +8,7 @@ net. In eval mode it greedily takes the highest-scoring action and records nothi
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 import torch
@@ -73,4 +74,33 @@ class PGPolicy(Policy):
         else:
             idx = int(torch.argmax(logits).item())
 
+        return state.available_actions[idx]
+
+
+class LeaguePolicy(Policy):
+    """Opponent for league self-play. Each battle is played by a random snapshot
+    drawn from the pool (chosen once per battle, sampled for diversity). It shares
+    the pool list with the trainer, which appends new snapshots over time — so the
+    learner must keep beating *all* its past selves, not just the latest. Never trains.
+    """
+
+    def __init__(self, nets: list[ActionScorer], device: str = "cpu") -> None:
+        self.nets = nets  # shared with the training loop, which appends snapshots
+        self.device = device
+        self._choice: dict[str, int] = {}  # battle_tag -> snapshot index for that battle
+
+    def select_action(self, state: BattleState) -> Action:
+        global_feats, action_feats = featurize(state)
+        if not action_feats:
+            raise ValueError("LeaguePolicy called with no available actions")
+        tag = state.battle_tag or "_unknown"
+        if tag not in self._choice:
+            self._choice[tag] = random.randrange(len(self.nets))
+        net = self.nets[self._choice[tag]]
+
+        g = torch.tensor(global_feats, dtype=torch.float32, device=self.device)
+        a = torch.tensor(action_feats, dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            logits = net.score_actions(g, a)
+        idx = int(torch.distributions.Categorical(logits=logits).sample().item())
         return state.available_actions[idx]

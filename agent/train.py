@@ -32,7 +32,7 @@ import torch
 
 from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM
 from cinnabar.policy import MaxDamagePolicy, RandomPolicy
-from cinnabar.rl.agent import PGPolicy
+from cinnabar.rl.agent import LeaguePolicy, PGPolicy
 from cinnabar.rl.net import ActionScorer
 from cinnabar.rl.returns import discounted_returns, standardize
 from cinnabar.showdown import PolicyPlayer
@@ -59,10 +59,14 @@ def parse_args() -> argparse.Namespace:
                    help="reward for a turn-limit draw; -1 treats a stall as a loss")
     p.add_argument("--step-penalty", type=float, default=0.0,
                    help="per-turn penalty to discourage stalling (try 0.01 if stalls persist)")
-    p.add_argument("--opponent", choices=["random", "maxdamage", "self"], default="random",
-                   help="training opponent (curriculum: random -> maxdamage -> self-play)")
+    p.add_argument("--opponent", choices=["random", "maxdamage", "self", "league"], default="random",
+                   help="training opponent (curriculum: random -> maxdamage -> self/league)")
     p.add_argument("--snapshot-every", type=int, default=10,
-                   help="self-play: refresh the opponent snapshot every N iters")
+                   help="self-play/league: snapshot the learner every N iters")
+    p.add_argument("--reward", choices=["sparse", "shaped"], default="sparse",
+                   help="sparse win/loss, or win/loss + material (faint) differential")
+    p.add_argument("--faint-value", type=float, default=0.5,
+                   help="shaped reward: weight on (opp_faints - our_faints)/6")
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-battles", type=int, default=50)
@@ -165,6 +169,29 @@ def make_player(policy, concurrency, team):
     )
 
 
+def snapshot_net(net, hidden, device):
+    """A frozen copy of the current learner network (for self-play / league pools)."""
+    snap = ActionScorer(GLOBAL_DIM, ACTION_DIM, hidden).to(device)
+    snap.load_state_dict(net.state_dict())
+    return snap
+
+
+def terminal_reward(battle, args) -> float:
+    """Sparse win/loss, optionally plus a material (faint-differential) bonus so the
+    agent is rewarded for winning decisively / losing while still dealing damage."""
+    if battle.won is True:
+        base = 1.0
+    elif battle.won is False:
+        base = -1.0
+    else:
+        base = args.tie_reward
+    if args.reward == "shaped":
+        our_faints = sum(1 for m in battle.team.values() if m.fainted)
+        opp_faints = sum(1 for m in battle.opponent_team.values() if m.fainted)
+        base += args.faint_value * (opp_faints - our_faints) / 6.0
+    return base
+
+
 async def eval_winrate(policy: PGPolicy, learner: PolicyPlayer, opponent: PolicyPlayer, n: int) -> float:
     policy.eval()
     learner.reset_battles()
@@ -190,12 +217,16 @@ async def main() -> None:
     rng = make_player(RandomPolicy(), args.concurrency, teambuilder)
 
     opp_net = None
+    pool = None
     if args.opponent == "self":
         opp_net = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
         opp_net.load_state_dict(net.state_dict())  # opponent starts as a copy of the learner
         opp_policy = PGPolicy(opp_net, device=args.device)
         opp_policy.record = False  # samples for diversity; never trains
         train_opp = make_player(opp_policy, args.concurrency, teambuilder)
+    elif args.opponent == "league":
+        pool = [snapshot_net(net, args.hidden, args.device)]  # grows as training proceeds
+        train_opp = make_player(LeaguePolicy(pool, device=args.device), args.concurrency, teambuilder)
     elif args.opponent == "maxdamage":
         train_opp = maxdmg
     else:
@@ -203,7 +234,8 @@ async def main() -> None:
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    print(f"Training {args.iters} iters x {args.batch} battles vs {args.opponent} [{args.algo}]. Saving to {out}/")
+    print(f"Training {args.iters} iters x {args.batch} battles vs {args.opponent} "
+          f"[{args.algo}, {args.reward} reward]. Saving to {out}/")
 
     best_md = -1.0  # track the best vs-maxdamage eval so noise can't lose our peak
     for it in range(1, args.iters + 1):
@@ -220,12 +252,9 @@ async def main() -> None:
             total += 1
             if battle.won is True:
                 wins += 1
-                reward = 1.0
-            elif battle.won is False:
-                reward = -1.0
-            else:  # turn-limit draw — a non-win, not a free pass
+            elif battle.won is None:  # turn-limit draw — a non-win, not a free pass
                 ties += 1
-                reward = args.tie_reward
+            reward = terminal_reward(battle, args)
             rewards = [-args.step_penalty] * len(recs)
             rewards[-1] += reward
             returns.extend(discounted_returns(rewards, args.gamma))
@@ -258,6 +287,8 @@ async def main() -> None:
 
         if opp_net is not None and it % args.snapshot_every == 0:
             opp_net.load_state_dict(net.state_dict())  # opponent catches up to the learner
+        if pool is not None and it % args.snapshot_every == 0:
+            pool.append(snapshot_net(net, args.hidden, args.device))  # add a new league member
 
 
 if __name__ == "__main__":
