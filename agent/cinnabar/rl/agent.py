@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import torch
 
-from ..encoding import featurize
+from ..encoding import TEAM_SIZE, featurize
 from ..policy import Policy
 from ..state import Action, BattleState
 from .net import ActionScorer
@@ -29,6 +29,8 @@ class StepRecord:
     chosen: int
     behavior_logp: float = 0.0  # log-prob of `chosen` under the rollout policy (PPO ratio)
     value: float = 0.0  # value estimate at rollout time (PPO baseline)
+    our_material: float = 0.0  # sum of our team HP fractions at decision time (dense reward)
+    opp_material: float = 0.0  # 6 - damage dealt to revealed opp mons (dense reward)
 
 
 class PGPolicy(Policy):
@@ -67,9 +69,13 @@ class PGPolicy(Policy):
                     behavior_logp = float(dist.log_prob(sample))
                     value = float(self.net.value(g))
             if self.record:
+                our_material = sum(m.hp_fraction for m in state.team)
+                revealed = state.opponent_team
+                opp_material = sum(m.hp_fraction for m in revealed) + (TEAM_SIZE - len(revealed))
                 tag = state.battle_tag or "_unknown"
                 self.steps_by_battle.setdefault(tag, []).append(
-                    StepRecord(global_feats, action_feats, idx, behavior_logp, value)
+                    StepRecord(global_feats, action_feats, idx, behavior_logp, value,
+                               our_material, opp_material)
                 )
         else:
             idx = int(torch.argmax(logits).item())

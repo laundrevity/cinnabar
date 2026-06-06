@@ -30,7 +30,7 @@ from pathlib import Path
 
 import torch
 
-from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM
+from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM, TEAM_SIZE
 from cinnabar.policy import MaxDamagePolicy, RandomPolicy
 from cinnabar.rl.agent import LeaguePolicy, PGPolicy
 from cinnabar.rl.net import ActionScorer
@@ -63,10 +63,12 @@ def parse_args() -> argparse.Namespace:
                    help="training opponent (curriculum: random -> maxdamage -> self/league)")
     p.add_argument("--snapshot-every", type=int, default=10,
                    help="self-play/league: snapshot the learner every N iters")
-    p.add_argument("--reward", choices=["sparse", "shaped"], default="sparse",
-                   help="sparse win/loss, or win/loss + material (faint) differential")
+    p.add_argument("--reward", choices=["sparse", "shaped", "dense"], default="sparse",
+                   help="sparse win/loss; shaped (+ faint differential); dense (per-turn HP deltas)")
     p.add_argument("--faint-value", type=float, default=0.5,
                    help="shaped reward: weight on (opp_faints - our_faints)/6")
+    p.add_argument("--dmg-value", type=float, default=1.0,
+                   help="dense reward: weight on per-turn (HP dealt - HP taken)")
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-battles", type=int, default=50)
@@ -176,20 +178,43 @@ def snapshot_net(net, hidden, device):
     return snap
 
 
-def terminal_reward(battle, args) -> float:
-    """Sparse win/loss, optionally plus a material (faint-differential) bonus so the
-    agent is rewarded for winning decisively / losing while still dealing damage."""
+def win_loss(battle, args) -> float:
     if battle.won is True:
-        base = 1.0
-    elif battle.won is False:
-        base = -1.0
-    else:
-        base = args.tie_reward
+        return 1.0
+    if battle.won is False:
+        return -1.0
+    return args.tie_reward
+
+
+def battle_material(battle):
+    """(our HP-sum, opp HP-sum) at battle end. Unrevealed opp mons count as full, so
+    revealing a fresh Pokémon doesn't register as the opponent *gaining* material."""
+    our = sum(m.current_hp_fraction for m in battle.team.values())
+    revealed = list(battle.opponent_team.values())
+    opp = sum(m.current_hp_fraction for m in revealed) + (TEAM_SIZE - len(revealed))
+    return our, opp
+
+
+def build_rewards(recs, battle, args) -> list[float]:
+    """Per-step reward list for one battle (pre-discount), per --reward mode."""
+    if args.reward == "dense":
+        mats = [(r.our_material, r.opp_material) for r in recs] + [battle_material(battle)]
+        rewards = []
+        for t in range(len(recs)):
+            (our0, opp0), (our1, opp1) = mats[t], mats[t + 1]
+            dealt, taken = opp0 - opp1, our0 - our1
+            rewards.append(args.dmg_value * (dealt - taken) - args.step_penalty)
+        rewards[-1] += win_loss(battle, args)  # terminal outcome on top of per-turn deltas
+        return rewards
+
+    base = win_loss(battle, args)
     if args.reward == "shaped":
-        our_faints = sum(1 for m in battle.team.values() if m.fainted)
-        opp_faints = sum(1 for m in battle.opponent_team.values() if m.fainted)
-        base += args.faint_value * (opp_faints - our_faints) / 6.0
-    return base
+        our_f = sum(1 for m in battle.team.values() if m.fainted)
+        opp_f = sum(1 for m in battle.opponent_team.values() if m.fainted)
+        base += args.faint_value * (opp_f - our_f) / TEAM_SIZE
+    rewards = [-args.step_penalty] * len(recs)
+    rewards[-1] += base
+    return rewards
 
 
 async def eval_winrate(policy: PGPolicy, learner: PolicyPlayer, opponent: PolicyPlayer, n: int) -> float:
@@ -254,10 +279,7 @@ async def main() -> None:
                 wins += 1
             elif battle.won is None:  # turn-limit draw — a non-win, not a free pass
                 ties += 1
-            reward = terminal_reward(battle, args)
-            rewards = [-args.step_penalty] * len(recs)
-            rewards[-1] += reward
-            returns.extend(discounted_returns(rewards, args.gamma))
+            returns.extend(discounted_returns(build_rewards(recs, battle, args), args.gamma))
             steps.extend(recs)
 
         if not steps:
