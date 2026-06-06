@@ -55,8 +55,9 @@ cd agent
 # 1. Sanity check — two random bots play each other (watch at localhost:8000)
 uv run python smoke_test.py
 
-# 2. Play against it yourself
-uv run python play.py
+# 2. Play against it yourself — random bot, or your trained agent
+uv run python play.py                                     # random bot
+uv run python play.py --checkpoint models_sp/pg_best.pt   # your self-play champion
 
 # 3. Compare policies — baselines or a trained checkpoint (server running)
 uv run python evaluate.py                                              # maxdamage vs random
