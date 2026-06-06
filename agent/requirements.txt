@@ -1,0 +1,9 @@
+# Cinnabar agent dependencies (Python >= 3.10)
+#
+# poke-env is the Showdown client + battle-state tracker + agent API. We keep it
+# behind an adapter (cinnabar/showdown.py) so the core (state.py, policy.py) has
+# no dependency on it.
+#
+# Unpinned for now. After your first successful `pip install`, pin exact versions:
+#   pip freeze > requirements.lock.txt
+poke-env
