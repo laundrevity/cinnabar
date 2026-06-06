@@ -1,0 +1,26 @@
+[project]
+name = "cinnabar-agent"
+version = "0.0.0"
+description = "AI agent that plays Pokémon battles on Pokémon Showdown (Gen 1 OU)."
+requires-python = ">=3.10"
+dependencies = [
+    "poke-env",
+]
+
+# No [build-system] on purpose: this is a uv "virtual" project. uv manages the
+# environment and dependencies but does not build/install `cinnabar` as a wheel —
+# the scripts import it directly. Promote to a packaged project later if we want
+# `cinnabar` importable from anywhere.
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100

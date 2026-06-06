@@ -9,12 +9,14 @@ WebSocket protocol and battle-state tracking).
 The package is split so the decision-making core never touches poke-env:
 
 ```
+pyproject.toml # uv project: deps (poke-env) + dev group (pytest, ruff)
 cinnabar/
   state.py     # our BattleState + Action types        (no poke-env)
   policy.py    # Policy ABC + RandomPolicy              (no poke-env)
   showdown.py  # PolicyPlayer: the poke-env adapter     (the only poke-env code)
 play.py        # Phase 0: accept human challenges in Gen 1 OU
 smoke_test.py  # bot-vs-bot sanity check, watchable in the browser
+tests/         # pytest for the engine-free core
 ```
 
 Every future agent (heuristic, RL, self-play) implements `Policy.select_action`.
@@ -22,14 +24,16 @@ If we ever swap poke-env for a faster engine, only `showdown.py` changes.
 
 ## Setup
 
-Requires Python 3.10+ and a local Showdown server (`../scripts/run-server.sh`).
+Requires [uv](https://docs.astral.sh/uv/) and a local Showdown server
+(`../scripts/run-server.sh`).
 
 ```bash
 cd agent
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync            # creates .venv + installs deps from pyproject.toml, writes uv.lock
 ```
+
+uv manages the Python interpreter and the virtualenv — no manual `venv` or
+`activate`. `uv run` also auto-syncs, so the explicit `uv sync` is optional.
 
 ## Run
 
@@ -39,16 +43,20 @@ In one terminal, start the server (from the repo root):
 scripts/run-server.sh
 ```
 
-In another, with the venv active:
+In another:
 
 ```bash
 cd agent
 
 # 1. Sanity check — two random bots play each other (watch at localhost:8000)
-python smoke_test.py
+uv run python smoke_test.py
 
 # 2. Play against it yourself
-python play.py
+uv run python play.py
+
+# tests / lint (engine-free core; no server needed)
+uv run pytest
+uv run ruff check
 ```
 
 To play it: open http://localhost:8000, pick any name, build or **import a

@@ -34,10 +34,14 @@ interface. The progression is deliberately incremental:
    self-play, ~1000× faster than Showdown's sim. It is pre-v0.1 and currently targets
    Gen 1/2, which aligns with our Gen 1 scope. This is a phase-3 optimization, not a
    foundation.
-4. **Agent language is not yet decided.** Python is the strong default (Gymnasium, PyTorch,
-   stable-baselines3, and [`poke-env`](https://poke-env.readthedocs.io/) which ships a
-   `RandomPlayer` and a Gym wrapper). TypeScript keeps a single-language stack with Showdown
-   but has a thinner ML ecosystem. Decide before the training phase.
+4. **Agent language: Python, managed with [`uv`](https://docs.astral.sh/uv/)** (not pip/venv).
+   The ML ecosystem (Gymnasium, PyTorch, stable-baselines3) and
+   [`poke-env`](https://poke-env.readthedocs.io/) — the Showdown client + battle-state
+   tracker + agent API, which ships a `RandomPlayer` and a Gym wrapper — live here.
+5. **poke-env is kept behind an adapter** (`agent/cinnabar/showdown.py`). The decision core
+   (`agent/cinnabar/state.py`, `policy.py`) reasons over our own `BattleState`/`Action` types
+   and has no engine dependency, so agents can be retargeted (e.g. to `@pkmn/engine`) by
+   rewriting one file. Every agent — random, heuristic, RL — implements `Policy.select_action`.
 
 ## Repo layout
 
@@ -48,7 +52,12 @@ cinnabar/
 ├── docs/roadmap.md     # the phased plan in detail
 ├── server/             # Pokémon Showdown lives here
 │   └── pokemon-showdown/   # git submodule (added by scripts/setup.sh)
-├── agent/              # the AI agent (language TBD) — currently a placeholder
+├── agent/              # Python agent (uv project)
+│   ├── pyproject.toml      # deps (poke-env) + dev group (pytest, ruff)
+│   ├── cinnabar/           # state.py + policy.py (engine-free) | showdown.py (poke-env adapter)
+│   ├── play.py             # Phase 0: accept human challenges in Gen 1 OU
+│   ├── smoke_test.py       # bot-vs-bot sanity check
+│   └── tests/              # pytest for the engine-free core
 ├── teams/              # Gen 1 OU teams in Showdown export format
 └── scripts/
     ├── setup.sh        # add submodule + npm install + build
@@ -61,6 +70,10 @@ cinnabar/
 - **Run local server:** `scripts/run-server.sh` → http://localhost:8000
   - WebSocket endpoint: `ws://localhost:8000/showdown/websocket`
 - **Play in browser:** start the server, open the printed URL, pick Gen 1 OU.
+- **Set up the agent:** `cd agent && uv sync`
+- **Smoke test (bot vs bot):** `cd agent && uv run python smoke_test.py` (server running)
+- **Play the bot (random vs human):** `cd agent && uv run python play.py`
+- **Tests / lint:** `cd agent && uv run pytest` · `uv run ruff check`
 
 ## Conventions
 
