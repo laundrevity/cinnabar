@@ -93,6 +93,7 @@ class PolicyPlayer(Player):
             hp_fraction=mon.current_hp_fraction,
             status=mon.status.name if mon.status else None,
             types=tuple(t.name for t in mon.types if t is not None),
+            speed=(getattr(mon, "base_stats", None) or {}).get("spe"),
         )
 
     def _chart(self, battle):

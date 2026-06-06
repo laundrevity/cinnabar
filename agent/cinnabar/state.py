@@ -59,6 +59,7 @@ class ActivePokemon:
     hp_fraction: float
     status: Optional[str] = None
     types: tuple[str, ...] = ()  # e.g. ("WATER", "PSYCHIC")
+    speed: Optional[int] = None  # base Speed stat (turn order; Gen 1 OU runs maxed stats)
 
 
 @dataclass

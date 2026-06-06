@@ -87,8 +87,8 @@ moves.
 ## Status
 
 Phase 3 (in progress): a custom PyTorch RL agent (`cinnabar/rl/`) trained by PPO
-(REINFORCE selectable via `--algo`) on a sparse win/loss reward, with per-switch and
-team-state observations, by **self-play** — single snapshot (`--opponent self`) or a **snapshot league**
+(REINFORCE selectable via `--algo`) on a sparse win/loss reward, with per-switch,
+team-state, and speed/turn-order observations, by **self-play** — single snapshot (`--opponent self`) or a **snapshot league**
 (`--opponent league`) to avoid cycling — over a **pool of teams** (`../teams/`, random
 per battle), with sparse or **shaped** reward (`--reward shaped`: win/loss + material).
 Beats the `MaxDamagePolicy` baseline; measured against the random / max-damage yardsticks.

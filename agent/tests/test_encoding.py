@@ -147,3 +147,21 @@ def test_fixed_damage_feature():
     assert encode_action(seismic, _state())[10] == 1.0  # 100 / 100
     # a normal damaging move has no fixed-damage component
     assert encode_action(_move(0, "psychic", 90, "PSYCHIC"), _state())[10] == 0.0
+
+
+def test_speed_advantage_feature():
+    faster = BattleState(turn=1, available_actions=[],
+        active=ActivePokemon("Tauros", 1.0, types=("NORMAL",), speed=110),
+        opponent_active=ActivePokemon("Snorlax", 1.0, types=("NORMAL",), speed=30))
+    assert encode_global(faster)[20] == 1.0
+
+    slower = BattleState(turn=1, available_actions=[],
+        active=ActivePokemon("Snorlax", 1.0, types=("NORMAL",), speed=30),
+        opponent_active=ActivePokemon("Tauros", 1.0, types=("NORMAL",), speed=110))
+    assert encode_global(slower)[20] == 0.0
+
+    # paralysis quarters our speed (110 // 4 = 27 < 30) -> now slower
+    para = BattleState(turn=1, available_actions=[],
+        active=ActivePokemon("Tauros", 1.0, status="PAR", types=("NORMAL",), speed=110),
+        opponent_active=ActivePokemon("Snorlax", 1.0, types=("NORMAL",), speed=30))
+    assert encode_global(para)[20] == 0.0

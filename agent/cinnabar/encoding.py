@@ -22,13 +22,28 @@ _STATUS_INDEX = {name: i for i, name in enumerate(STATUS_ORDER)}
 
 TEAM_SIZE = 6
 
-# global = hps(2) + two status one-hots + force_switch + turn + team aggregates(4)
-GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4
+# global = hps(2) + two status one-hots + force_switch + turn + team aggregates(4) + speed(1)
+GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1
 # action = move features(7) + switch-target features(3) + fixed-damage(1)
 ACTION_DIM = 7 + 3 + 1
 
 _MAX_BASE_POWER = 200.0  # Self-Destruct (200) is about the Gen 1 ceiling
 _TURN_SCALE = 50.0
+
+
+def _effective_speed(mon) -> int | None:
+    """Base Speed, quartered if paralyzed (Gen 1 rule). None if unknown."""
+    if mon is None or mon.speed is None:
+        return None
+    return mon.speed // 4 if mon.status == "PAR" else mon.speed
+
+
+def _speed_advantage(active, opponent) -> float:
+    """1.0 if we move first, 0.0 if last, 0.5 on a tie / unknown."""
+    a, b = _effective_speed(active), _effective_speed(opponent)
+    if a is None or b is None or a == b:
+        return 0.5
+    return 1.0 if a > b else 0.0
 
 
 def _status_one_hot(status: str | None) -> list[float]:
@@ -62,6 +77,7 @@ def encode_global(state: BattleState) -> list[float]:
         our_hp_total,
         opp_fainted,
         opp_revealed,
+        _speed_advantage(state.active, state.opponent_active),
     ]
 
 
