@@ -118,10 +118,18 @@ uint32_t RNG::next() {
     return static_cast<uint32_t>(state >> 32);
 }
 int RNG::random(int n) {
-    return static_cast<int>((static_cast<uint64_t>(next()) * static_cast<uint64_t>(n)) >> 32);
+    int r = static_cast<int>((static_cast<uint64_t>(next()) * static_cast<uint64_t>(n)) >> 32);
+#ifdef CINNABAR_DEBUG
+    std::fprintf(stderr, "  ourrng random(%d) = %d\n", n, r);
+#endif
+    return r;
 }
 int RNG::random(int from, int to) {
-    return static_cast<int>((static_cast<uint64_t>(next()) * static_cast<uint64_t>(to - from)) >> 32) + from;
+    int r = static_cast<int>((static_cast<uint64_t>(next()) * static_cast<uint64_t>(to - from)) >> 32) + from;
+#ifdef CINNABAR_DEBUG
+    std::fprintf(stderr, "  ourrng random(%d,%d) = %d\n", from, to, r);
+#endif
+    return r;
 }
 int RNG::range(int lo, int hi) { return random(lo, hi + 1); }
 bool RNG::chance(int num, int den) { return random(den) < num; }
@@ -410,14 +418,33 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
     bool m1 = c1.kind == ChoiceKind::Move;
     bool m2 = c2.kind == ChoiceKind::Move;
     int s1 = effective_speed(p1.mon()), s2 = effective_speed(p2.mon());
-    bool p1_first = (s1 != s2) ? (s1 > s2) : rng.chance(1, 2);
+
+    // Speed ties: Showdown burns extra random(0,2) "speed-tie shuffles" across its scheduler
+    // (it re-shuffles the equal-speed actives in every event pass). To stay bit-aligned we
+    // replicate the steady-state frame — both actives present and acting: 3 shuffles before
+    // the moves (the first decides order), 1 between the moves, 2 after — only the first
+    // changes observable state. (Distinct speeds consume nothing, matching Showdown.)
+    bool tie = (m1 && m2 && s1 == s2);
+    bool p1_first;
+    if (s1 != s2) {
+        p1_first = s1 > s2;
+    } else if (tie) {
+        p1_first = (rng.random(0, 2) == 0);  // move-order shuffle: 0 = no swap = p1 first
+        rng.random(0, 2);
+        rng.random(0, 2);
+    } else {
+        p1_first = (rng.random(0, 2) == 0);
+    }
 #ifdef CINNABAR_DEBUG
-    std::fprintf(stderr, "[turn %d] s1=%d s2=%d p1_first=%d\n", turn, s1, s2, static_cast<int>(p1_first));
+    std::fprintf(stderr, "[turn %d] s1=%d s2=%d p1_first=%d tie=%d\n", turn, s1, s2,
+                 static_cast<int>(p1_first), static_cast<int>(tie));
 #endif
 
     auto act1 = [&]() { if (m1) try_move(p1, p2, c1.index, rng); };
     auto act2 = [&]() { if (m2) try_move(p2, p1, c2.index, rng); };
-    if (p1_first) { act1(); act2(); } else { act2(); act1(); }
+    if (p1_first) { act1(); if (tie) rng.random(0, 2); act2(); }
+    else          { act2(); if (tie) rng.random(0, 2); act1(); }
+    if (tie) { rng.random(0, 2); rng.random(0, 2); }
 
     residual(p1.mon());
     residual(p2.mon());
@@ -438,7 +465,13 @@ Battle make_battle(const TeamSpec& team1, const TeamSpec& team2, uint64_t seed) 
         }
         return s;
     };
-    return Battle(build(team1), build(team2), seed);
+    Battle b(build(team1), build(team2), seed);
+    // Battle-start speed-tie shuffles: Showdown shuffles the equal-speed actives four times
+    // during its start sequence before turn 1. Replicate so the RNG stream stays aligned.
+    if (b.p1.mon().m_spe == b.p2.mon().m_spe) {
+        for (int i = 0; i < 4; ++i) b.rng.random(0, 2);
+    }
+    return b;
 }
 
 }  // namespace cinnabar

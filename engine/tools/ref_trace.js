@@ -33,18 +33,29 @@ const P2 = packTeam(`${P2S}\n${EVS}\n- ${P2M}\n`);
 const code = (s) => s || "none"; // '' -> none; else slp/par/brn/frz/psn
 
 function runBattle(seedWords, debug) {
-    const battle = new Battle({
-        formatid: "gen1customgame",
-        seed: seedWords,
-        p1: { name: "p1", team: P1 },
-        p2: { name: "p2", team: P2 },
-    });
+    let battle;
     if (debug) {
+        // Construct without players first so the PRNG can be wrapped before the battle starts,
+        // capturing EVERY random() call (incl. battle-start / per-event speed-tie shuffles).
+        battle = new Battle({ formatid: "gen1customgame", seed: seedWords });
+        const realRandom = battle.prng.random.bind(battle.prng);
+        battle.prng.random = (...args) => {
+            const r = realRandom(...args);
+            console.error(`  rng t${battle.turn} random(${args.join(",")}) = ${r}`);
+            return r;
+        };
+        battle.setPlayer("p1", { name: "p1", team: P1 });
+        battle.setPlayer("p2", { name: "p2", team: P2 });
         for (const [label, side] of [["p1", battle.sides[0]], ["p2", battle.sides[1]]]) {
             const p = side.active[0];
             console.error(`${label} ${p.set.species} L${p.level} maxhp=${p.maxhp} ability=${p.ability || "(none)"}`);
             console.error(`   storedStats = ${JSON.stringify(p.storedStats)}`);
         }
+    } else {
+        battle = new Battle({
+            formatid: "gen1customgame", seed: seedWords,
+            p1: { name: "p1", team: P1 }, p2: { name: "p2", team: P2 },
+        });
     }
     const snap = () => {
         const a = battle.sides[0].active[0];
