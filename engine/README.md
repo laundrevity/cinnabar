@@ -25,8 +25,9 @@ ctest --test-dir build --output-on-failure     # run the unit tests
 - Gen 1 **damage formula**, **stat formula** (L100 maxed), **type chart** with the quirks
   (Ghost⇒Psychic = 0, Bug⇔Poison = 2×), type-based physical/special split, STAB, crit, immunities
 
-Known simplifications to refine via differential testing: the 1/256 miss, exact crit rate,
-freeze thaw, PP/Struggle, stat stages, Hyper Beam recharge, and a Showdown-bit-compatible RNG.
+Known gaps to resolve via the exact trace diff: aligning the RNG *call sequence* to Showdown
+(the RNG **backend** now matches its Gen 5 LCG), the 1/256 miss, exact crit rate, freeze thaw,
+PP/Struggle, stat stages, Hyper Beam recharge.
 
 ## Python bindings (pybind11)
 
@@ -46,8 +47,12 @@ Next on top of it: a `cinnabar/engine_cpp.py` adapter yielding the agent's `Batt
 
 ## Fidelity strategy (what keeps it honest)
 
-1. **Differential testing against Showdown** is the source of truth: identical battle + RNG
-   through this engine and Showdown's gen1 sim (our submodule), diffed turn-for-turn. (Next.)
+1. **Differential testing against Showdown — exact, turn-for-turn (not statistical).** Same
+   teams, same seed, same choices through this engine and Showdown's gen1 sim (the submodule),
+   diffing every turn. Our RNG is now **bit-identical to Showdown's Gen 5 LCG** (seed Showdown
+   with a numeric/`gen5` seed, not the default `sodium`/ChaCha20), so the streams line up; the
+   remaining work is aligning every RNG *call* (crit, accuracy, damage roll, speed-tie shuffle,
+   secondary effects) to Showdown's exact order until the traces are identical.
 2. **Static data is generated from Showdown** — `tools/gen_data.py` pulls poke-env's Gen 1 data
    and emits `include/cinnabar/gen1_data.hpp` (the type chart + all 151 species' base stats); the
    engine sources both from there. The audit confirmed the hand-coded chart already matched the

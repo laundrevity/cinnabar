@@ -73,12 +73,16 @@ const Species& species(const std::string& name);
 // Look up a move by name from the engine's move table (hand-coded for now).
 const MoveData& move(const std::string& name);
 
+// Bit-identical to Showdown's Gen 5 LCG PRNG. Seed Showdown battles with a numeric/gen5
+// seed (not the default 'sodium' ChaCha20) so its RNG stream matches this one exactly.
 struct RNG {
     uint64_t state;
-    explicit RNG(uint64_t seed) : state(seed ? seed : 0x9E3779B97F4A7C15ull) {}
-    uint32_t next();
-    int range(int lo, int hi);  // inclusive
-    bool chance(int num, int den);
+    explicit RNG(uint64_t seed) : state(seed) {}
+    uint32_t next();               // advance the LCG, return the upper 32 bits
+    int random(int n);             // [0, n)        == Showdown PRNG.random(n)
+    int random(int from, int to);  // [from, to)    == Showdown PRNG.random(from, to)
+    int range(int lo, int hi);     // inclusive [lo, hi] == random(lo, hi + 1)
+    bool chance(int num, int den); // == Showdown PRNG.randomChance(num, den)
 };
 
 struct Side {

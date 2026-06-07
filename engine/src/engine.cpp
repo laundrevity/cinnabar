@@ -88,13 +88,18 @@ Pokemon make_pokemon(const Species* s, std::vector<const MoveData*> moves, int l
 }
 
 uint32_t RNG::next() {
-    state ^= state << 13;
-    state ^= state >> 7;
-    state ^= state << 17;
+    // Showdown Gen5RNG: x = x * a + c (mod 2^64); output is the upper 32 bits.
+    state = state * 0x5D588B656C078965ULL + 0x00269EC3ULL;
     return static_cast<uint32_t>(state >> 32);
 }
-int RNG::range(int lo, int hi) { return lo + static_cast<int>(next() % static_cast<uint32_t>(hi - lo + 1)); }
-bool RNG::chance(int num, int den) { return static_cast<int>(next() % static_cast<uint32_t>(den)) < num; }
+int RNG::random(int n) {
+    return static_cast<int>((static_cast<uint64_t>(next()) * static_cast<uint64_t>(n)) >> 32);
+}
+int RNG::random(int from, int to) {
+    return static_cast<int>((static_cast<uint64_t>(next()) * static_cast<uint64_t>(to - from)) >> 32) + from;
+}
+int RNG::range(int lo, int hi) { return random(lo, hi + 1); }
+bool RNG::chance(int num, int den) { return random(den) < num; }
 
 bool Side::has_alive_bench() const {
     for (int i = 0; i < static_cast<int>(team.size()); ++i)

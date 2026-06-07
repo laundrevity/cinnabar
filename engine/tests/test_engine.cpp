@@ -61,6 +61,18 @@ int main() {
     CHECK(type_effectiveness(Type::Bug, Type::Poison) == 2.0);      // Gen 1 quirk
     CHECK(type_effectiveness(Type::Electric, Type::Ground) == 0.0);
 
+    // RNG bit-identical to Showdown's Gen 5 LCG (reference values from the LCG recurrence).
+    {
+        RNG r(0x123456789ABCDEF0ULL);
+        CHECK_EQ(r.next(), 3683702347u);
+        CHECK_EQ(r.next(), 3207779802u);
+        CHECK_EQ(r.next(), 4072565397u);
+        RNG r2(0x123456789ABCDEF0ULL);
+        CHECK_EQ(r2.random(100), 85);
+        RNG r3(0x123456789ABCDEF0ULL);
+        CHECK_EQ(r3.range(217, 255), 250);  // == Showdown PRNG.random(217, 256)
+    }
+
     // Switching: active changes and the outgoing mon's Reflect clears.
     {
         Battle b(make_team(), make_team(), 1);
