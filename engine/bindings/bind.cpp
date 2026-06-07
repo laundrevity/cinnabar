@@ -44,6 +44,23 @@ PYBIND11_MODULE(cinnabar_engine, m) {
         }, py::arg("player"))
         .def("active_hp_fraction", [](const Battle& b, int player) {
             return (player == 0 ? b.p1 : b.p2).mon().hp_fraction();
+        }, py::arg("player"))
+        .def("active_hp", [](const Battle& b, int player) {
+            return (player == 0 ? b.p1 : b.p2).mon().hp;
+        }, py::arg("player"))
+        .def("active_max_hp", [](const Battle& b, int player) {
+            return (player == 0 ? b.p1 : b.p2).mon().max_hp;
+        }, py::arg("player"))
+        .def("active_status", [](const Battle& b, int player) {
+            switch ((player == 0 ? b.p1 : b.p2).mon().status) {
+                case Status::None: return std::string("none");
+                case Status::Sleep: return std::string("slp");
+                case Status::Poison: return std::string("psn");
+                case Status::Burn: return std::string("brn");
+                case Status::Freeze: return std::string("frz");
+                case Status::Paralysis: return std::string("par");
+            }
+            return std::string("?");
         }, py::arg("player"));
 
     // team1/team2 are list[tuple[str species, list[str] moves]].
