@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch", type=int, default=256, help="concurrent battles per update")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=3e-4)
-    p.add_argument("--hidden", type=int, default=64)
+    p.add_argument("--hidden", type=int, default=128)
     p.add_argument("--ent-coef", type=float, default=0.01)
     p.add_argument("--value-coef", type=float, default=0.5)
     p.add_argument("--epochs", type=int, default=4)

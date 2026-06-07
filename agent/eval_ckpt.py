@@ -74,7 +74,7 @@ def main() -> None:
     p.add_argument("--init", dest="init_flag", nargs="*", default=None, help="checkpoint(s) (alias)")
     p.add_argument("--teams-dir", default=str(Path(__file__).resolve().parent.parent / "teams"))
     p.add_argument("--battles", type=int, default=300)
-    p.add_argument("--hidden", type=int, default=64)
+    p.add_argument("--hidden", type=int, default=128)
     p.add_argument("--device", default="cpu")
     p.add_argument("--turn-limit", type=int, default=500)
     p.add_argument("--seed", type=int, default=0)

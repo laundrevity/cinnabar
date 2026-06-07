@@ -24,8 +24,12 @@ TEAM_SIZE = 6
 
 # global = hps(2) + two status one-hots + force_switch + turn + team aggregates(4) + speed(1)
 GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1
-# action = move features(7) + switch-target features(3) + fixed-damage(1)
-ACTION_DIM = 7 + 3 + 1
+# action = move features(7) + switch-target features(3) + fixed-damage(1) + effect features(11):
+#   status one-hot(5) + chance(1) + heals/boosts_self/lowers_foe/recharge/self_destruct(5)
+ACTION_DIM = 7 + 3 + 1 + 11
+
+# The status a move can inflict, encoded as a one-hot for the action features.
+_EFFECT_STATUS_ORDER = ["SLP", "PAR", "FRZ", "BRN", "PSN"]
 
 _MAX_BASE_POWER = 200.0  # Self-Destruct (200) is about the Gen 1 ceiling
 _TURN_SCALE = 50.0
@@ -106,6 +110,11 @@ def encode_action(action: Action, state: BattleState) -> list[float]:
     target_statused = 1.0 if action.target_statused else 0.0
     incoming = action.incoming_multiplier if action.incoming_multiplier is not None else 0.0
 
+    # Move-effect features: a one-hot for the status it can inflict, the chance, and flags for
+    # heal / self-boost / foe-drop / recharge / self-destruct. These let the policy tell apart
+    # moves that share power/type (e.g. Recover vs Sleep Powder vs Thunder Wave vs Reflect).
+    status_one_hot = [1.0 if action.effect_status == s else 0.0 for s in _EFFECT_STATUS_ORDER]
+
     return [
         1.0 if is_move else 0.0,
         1.0 if action.type == ActionType.SWITCH else 0.0,
@@ -118,6 +127,13 @@ def encode_action(action: Action, state: BattleState) -> list[float]:
         target_statused,
         incoming,
         (action.fixed_damage or 0.0) / 100.0,  # Seismic Toss/Night Shade = 1.0
+        *status_one_hot,
+        action.effect_chance,
+        1.0 if action.heals else 0.0,
+        1.0 if action.boosts_self else 0.0,
+        1.0 if action.lowers_foe else 0.0,
+        1.0 if action.recharge else 0.0,
+        1.0 if action.self_destruct else 0.0,
     ]
 
 

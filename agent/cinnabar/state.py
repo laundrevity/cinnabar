@@ -49,6 +49,15 @@ class Action:
     # How hard the opponent active's types hit this switch target (incoming danger;
     # higher = riskier switch). None when there's no opponent to compare to.
     incoming_multiplier: Optional[float] = None
+    # Move-effect facts (defaults for switches), so the policy can tell a heal from a
+    # sleep-inducer from a paralysis move — without these, all 0-power status moves look identical.
+    effect_status: Optional[str] = None   # status it can inflict: "SLP"/"PAR"/"FRZ"/"BRN"/"PSN"
+    effect_chance: float = 0.0            # probability of that status (1.0 = guaranteed primary)
+    heals: bool = False                   # Recover / Soft-Boiled / Rest
+    boosts_self: bool = False             # Amnesia / Swords Dance / Agility
+    lowers_foe: bool = False              # Growl / Screech / a damaging move's stat-drop secondary
+    recharge: bool = False                # Hyper Beam (must recharge next turn unless it KOs)
+    self_destruct: bool = False           # Explosion / Self-Destruct (faints the user)
 
 
 @dataclass

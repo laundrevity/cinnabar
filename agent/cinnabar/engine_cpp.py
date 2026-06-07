@@ -46,16 +46,39 @@ class StaticData:
 
     @lru_cache(maxsize=None)
     def move_meta(self, name: str) -> dict:
-        m = self._moves.get(_to_id(name), {})
+        mid = _to_id(name)
+        m = self._moves.get(mid, {})
         acc = m.get("accuracy", True)
         dmg = m.get("damage")
         fixed = 100.0 if dmg == "level" else (float(dmg) if isinstance(dmg, (int, float)) else None)
+        # Effect facts so the policy can distinguish moves with the same power/type (a heal, a
+        # sleep-inducer, a paralysis move and a stat-booster otherwise all look like "0-power status").
+        smap = {"slp": "SLP", "par": "PAR", "frz": "FRZ", "brn": "BRN", "psn": "PSN", "tox": "PSN"}
+        sec = m.get("secondary") or {}
+        if m.get("status") in smap:
+            eff_status, eff_chance = smap[m["status"]], 1.0
+        elif sec.get("status") in smap:
+            eff_status, eff_chance = smap[sec["status"]], float(sec.get("chance", 100)) / 100.0
+        else:
+            eff_status, eff_chance = "", 0.0
+        boosts = m.get("boosts") or {}
+        sec_boosts = sec.get("boosts") or {}
+        target = str(m.get("target", ""))
         return {
             "base_power": float(m.get("basePower", 0) or 0),
             "type": (m.get("type") or "Normal").upper(),
             "category": (m.get("category") or "Status").upper(),
             "accuracy": 1.0 if acc is True else (0.0 if acc is False else float(acc) / 100.0),
             "fixed": fixed,
+            "effect_status": eff_status,
+            "effect_chance": eff_chance,
+            "heals": bool(m.get("heal")) or mid in ("recover", "softboiled", "rest"),
+            "boosts_self": bool(boosts) and target == "self",
+            "lowers_foe": (bool(boosts) and target != "self" and any(v < 0 for v in boosts.values()))
+                          or any(v < 0 for v in sec_boosts.values()),
+            "recharge": mid == "hyperbeam" or bool((m.get("flags") or {}).get("recharge"))
+                        or (m.get("self") or {}).get("volatileStatus") == "mustrecharge",
+            "self_destruct": bool(m.get("selfdestruct")),
         }
 
     @lru_cache(maxsize=None)
@@ -102,6 +125,9 @@ def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str
                 base_power=mm["base_power"], move_type=mm["type"], category=mm["category"],
                 accuracy=mm["accuracy"], fixed_damage=mm["fixed"],
                 type_multiplier=static.type_mult(mm["type"], opp_types) if opp_types else None,
+                effect_status=mm["effect_status"], effect_chance=mm["effect_chance"],
+                heals=mm["heals"], boosts_self=mm["boosts_self"], lowers_foe=mm["lowers_foe"],
+                recharge=mm["recharge"], self_destruct=mm["self_destruct"],
             ))
         else:  # Switch — c.index is the team position
             tgt = ts[c.index]
