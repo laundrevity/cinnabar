@@ -65,8 +65,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--reward", choices=["sparse", "shaped", "dense"], default="shaped")
     p.add_argument("--faint-value", type=float, default=0.5)
     p.add_argument("--dmg-value", type=float, default=1.0)
-    p.add_argument("--opponent", choices=["random", "maxdamage", "self"], default="self")
-    p.add_argument("--snapshot-every", type=int, default=10)
+    p.add_argument("--opponent", choices=["random", "maxdamage", "self", "league"], default="self")
+    p.add_argument("--snapshot-every", type=int, default=10,
+                   help="self: refresh the opponent every N iters; league: add a snapshot every N iters")
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-battles", type=int, default=200)
     p.add_argument("--ckpt-every", type=int, default=25)
@@ -260,6 +261,15 @@ def eval_winrate(net, opp, args, n, base) -> float:
     return 100.0 * wins / max(n, 1)
 
 
+def _snapshot(net, args):
+    """A frozen copy of the learner network (a self-play / league opponent)."""
+    s = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
+    s.load_state_dict(net.state_dict())
+    for p in s.parameters():
+        p.requires_grad_(False)
+    return s
+
+
 def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
@@ -272,14 +282,17 @@ def main() -> None:
         net.load_state_dict(torch.load(args.init, map_location=args.device))
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
 
-    if args.opponent == "self":
-        opp = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
-        opp.load_state_dict(net.state_dict())
-        opp_net = opp
+    # Opponent: a fixed policy/snapshot, or a growing league pool of past snapshots.
+    pool = None
+    if args.opponent == "league":
+        pool = [_snapshot(net, args)]  # grows over training; each iter plays a random member
+        fixed_opp = None
+    elif args.opponent == "self":
+        fixed_opp = _snapshot(net, args)  # one snapshot, refreshed every snapshot-every
     elif args.opponent == "maxdamage":
-        opp, opp_net = MaxDamagePolicy(), None
+        fixed_opp = MaxDamagePolicy()
     else:
-        opp, opp_net = RandomPolicy(), None
+        fixed_opp = RandomPolicy()
 
     rng_eval, md_eval = RandomPolicy(), MaxDamagePolicy()
     out = Path(args.out)
@@ -290,6 +303,7 @@ def main() -> None:
     best_md = -1.0
     for it in range(1, args.iters + 1):
         t0 = time.time()
+        opp = random.choice(pool) if pool is not None else fixed_opp  # league: a random past self
         steps, returns, wins, ties, total = rollout(net, opp, args, it)
         info = (ppo_update(net, optimizer, steps, returns, epochs=args.epochs,
                            minibatch_size=args.minibatch_size, clip=args.clip,
@@ -307,8 +321,12 @@ def main() -> None:
                 best_md = wr_md
                 torch.save(net.state_dict(), out / "pg_best.pt")
 
-        if opp_net is not None and it % args.snapshot_every == 0:
-            opp_net.load_state_dict(net.state_dict())
+        if it % args.snapshot_every == 0:
+            if args.opponent == "self":
+                fixed_opp.load_state_dict(net.state_dict())  # opponent catches up to the learner
+            elif pool is not None:
+                pool.append(_snapshot(net, args))  # add a new league member
+                print(f"         league pool: {len(pool)} snapshots")
         if it % args.ckpt_every == 0 or it == args.iters:
             torch.save(net.state_dict(), out / f"pg_iter{it}.pt")
 
