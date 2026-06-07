@@ -44,7 +44,7 @@ const MoveData& move(const std::string& name) {
             m.emplace(e.name, MoveData{e.name, e.type, e.category, e.power, e.accuracy, e.fixed,
                                        e.effect, e.effect_chance, e.boost_stat, e.boost_stages,
                                        e.boost_target_foe, e.boost_chance, e.high_crit, e.pp,
-                                       e.recharge});
+                                       e.recharge, e.recoil_num, e.recoil_den, e.ignore_immunity});
         }
         return m;
     }();
@@ -211,6 +211,19 @@ bool can_act(Pokemon& p, RNG& rng) {
         p.must_recharge = false;  // flag, and skip the paralysis roll (priority 7 > par's 2).
         return false;
     }
+    // Confusion (onBeforeMove priority 3, after recharge, before paralysis). Decrement; if it just
+    // wore off the mon acts (and paralysis still rolls); else 50% it hits itself and loses the turn.
+    if (p.confuse_turns > 0) {
+        --p.confuse_turns;
+        if (p.confuse_turns > 0 && !rng.chance(128, 256)) {  // 50%: hurt itself in confusion
+            // Typeless 40-BP physical using the user's own (modified) Atk/Def — no type/STAB/crit.
+            long a = (2L * p.level) / 5 + 2;
+            long dmg = a * p.m_atk * 40 / std::max(1, p.m_def);
+            p.hp -= static_cast<int>(dmg / 50 + 2);
+            if (p.hp < 0) p.hp = 0;
+            return false;  // move cancelled by the self-hit
+        }
+    }
     if (p.status == Status::Paralysis)
         return !rng.chance(63, 256);  // Showdown gen1: 63/256 chance of full paralysis
     return true;
@@ -251,6 +264,13 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
     // Status-inflicting effects on the target.
     if (tgt.fainted()) return;  // KO'd by the damage -> no status roll (Showdown guards target.hp>0)
 
+    if (mv->effect == Effect::Confuse) {  // Confuse Ray: a volatile, independent of major status
+        if (tgt.has_substitute) return;  // a sub blocks confusion
+        // Gen 1: confusion ignores type immunity — Confuse Ray confuses Normal types despite being Ghost.
+        if (tgt.confuse_turns == 0) tgt.confuse_turns = rng.range(2, 5);  // 2-5 turns (else already confused)
+        return;
+    }
+
     const bool secondary = mv->effect_chance < 100;  // <100 == a damaging move's secondary
     // Substitute (Gen 1): while the target's sub is up, a damaging move's secondary status is
     // skipped entirely (no RNG roll); a primary status move is blocked only for poison —
@@ -270,12 +290,10 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
         // target is already statused (the set-status just fails afterwards).
         const int num = (mv->effect_chance * 256 + 99) / 100;  // ceil(chance * 256 / 100)
         if (!rng.chance(num, 256)) return;
-    } else {
-        // Primary status move (Thunder Wave, Sleep Powder, ...): guaranteed on hit, no roll,
-        // but blocked by type immunity (e.g. Thunder Wave vs a Ground-type).
-        if (mv->power == 0 && mv->fixed == 0 && combined_effectiveness(mv->type, tgt.species) == 0.0)
-            return;
     }
+    // A primary status move applies guaranteed on hit. Type immunity was already handled before
+    // the accuracy roll (in use_move), so anything reaching here is either not immune or a move
+    // that ignores immunity (Confuse Ray, Glare).
 
     if (tgt.status != Status::None) return;  // already statused -> set-status fails (roll spent)
 
@@ -311,7 +329,8 @@ void apply_boosts(const MoveData* mv, Pokemon& user, Pokemon& foe, RNG& rng) {
 
 // Struggle: used when every move is out of PP. Gen 1 — Normal, 50 BP, accuracy 100 (rolls the
 // 1/256 miss like any move), 1/2-damage recoil.
-static const MoveData STRUGGLE{"Struggle", Type::Normal, Category::Physical, 50, 100};
+static const MoveData STRUGGLE{.name = "Struggle", .type = Type::Normal, .category = Category::Physical,
+                               .power = 50, .accuracy = 100, .recoil_num = 1, .recoil_den = 2};
 
 void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
     Pokemon& a = as.mon();
@@ -326,14 +345,27 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
         if (!mv) return;
         if (a.pp[moveidx] > 0) --a.pp[moveidx];  // deduct PP on use (gen1: even if it misses/fails)
     }
-    int dealt = 0;
+    int recoil_base = 0;     // damage the recoil is computed from (capped; uncapped vs a sub)
+    bool recoil_ok = false;  // recoil applies (false vs a sub that broke on this hit)
 
-    // Accuracy — Showdown gen1 rolls randomChance(clamp(floor(acc*255/100),1,255), 256) for
-    // every non-self-targeting move, *including* 100%-accuracy ones (the 1/256 miss). Moves
-    // that target the user (Recover/Rest/Reflect) skip the roll.
+    // Moves that target the user (Recover/Rest/Reflect/Substitute, self-boosts) skip the
+    // accuracy roll and the immunity check below.
     bool self_targeting = mv->effect == Effect::Heal || mv->effect == Effect::Rest ||
                           mv->effect == Effect::Reflect || mv->effect == Effect::Substitute ||
                           (mv->boost_stat >= 0 && !mv->boost_target_foe);  // Amnesia/SD/Agility
+
+    // Gen 1 checks type immunity BEFORE accuracy (scripts.ts: runImmunity precedes the accuracy
+    // roll), so an immune move never rolls the 1/256. Only moves that do NOT ignore immunity are
+    // blocked: damaging moves and Thunder Wave respect it; most status moves (Confuse Ray, Glare)
+    // set ignoreImmunity and pass through.
+    if (!self_targeting && !mv->ignore_immunity &&
+        combined_effectiveness(mv->type, d.species) == 0.0) {
+        if (mv->effect == Effect::SelfDestruct) a.hp = 0;  // Explosion still faints the user
+        return;
+    }
+
+    // Accuracy — Showdown gen1 rolls randomChance(clamp(floor(acc*255/100),1,255), 256) for
+    // every non-self-targeting move, *including* 100%-accuracy ones (the 1/256 miss).
     if (!self_targeting && mv->accuracy > 0) {
         int acc = std::clamp(mv->accuracy * 255 / 100, 1, 255);
         if (!rng.chance(acc, 256)) {  // miss (includes the gen1 1/256)
@@ -390,18 +422,22 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
 #endif
         if (d.has_substitute) {  // Gen 1: damage hits the sub; excess is NOT dealt to real HP
             d.sub_hp -= dmg > d.sub_hp ? d.sub_hp : dmg;
+            recoil_ok = d.sub_hp > 0;  // recoil happens only if the sub survived (Gen 1)
             if (d.sub_hp <= 0) { d.has_substitute = false; d.sub_hp = 0; }
-            dealt = dmg;  // uncapped (for recoil/drain bookkeeping; not yet modelled)
+            recoil_base = dmg;  // uncapped (the Gen 1 sub quirk)
         } else {
             int actual = dmg < d.hp ? dmg : d.hp;  // Showdown caps damage at the target's HP
             d.hp -= actual;
-            dealt = actual;
+            recoil_base = actual;
+            recoil_ok = true;
         }
     }
 
     if (mv->effect == Effect::SelfDestruct) a.hp = 0;
-    if (struggle && dealt > 0) {  // Gen 1 Struggle recoil: floor(damage / 2), min 1
-        a.hp -= std::max(1, dealt / 2);
+    // Recoil to the user (Double-Edge/Take Down/Submission/Struggle): floor(dmg * num/den), min 1.
+    // Vs a Substitute, Gen 1 deals recoil only if the sub survived, off the uncapped damage.
+    if (mv->recoil_den > 0 && recoil_ok && recoil_base > 0) {
+        a.hp -= std::max(1, recoil_base * mv->recoil_num / mv->recoil_den);
         if (a.hp < 0) a.hp = 0;
     }
     apply_effect(mv, a, d, rng);
@@ -431,6 +467,7 @@ void do_switch(Side& s, int idx) {
     Pokemon& in = s.mon();
     in.must_recharge = false;  // volatiles clear on switch (a recharge can't carry to a new mon)
     in.has_substitute = false; in.sub_hp = 0;  // a Substitute does not persist across a switch
+    in.confuse_turns = 0;      // confusion clears on switch out
     // Gen 1: stat stages reset on switch — recompute modified stats from the stored stats...
     in.boost_atk = in.boost_def = in.boost_spc = in.boost_spe = 0;
     in.m_atk = in.atk; in.m_def = in.def; in.m_spc = in.spc; in.m_spe = in.spe;

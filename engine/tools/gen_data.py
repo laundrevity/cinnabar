@@ -125,6 +125,8 @@ def translate_move(mid: str, m: dict) -> tuple:
         effect, effect_chance = "Effect::Reflect", 100
     elif mid == "substitute":
         effect, effect_chance = "Effect::Substitute", 100
+    elif m.get("volatileStatus") == "confusion":
+        effect, effect_chance = "Effect::Confuse", 100  # Confuse Ray
     elif m.get("status") in STATUS_EFFECT:
         effect, effect_chance = STATUS_EFFECT[m["status"]], 100
     elif m.get("boosts"):
@@ -150,8 +152,15 @@ def translate_move(mid: str, m: dict) -> tuple:
     selfvol = (m.get("self") or {}).get("volatileStatus")
     recharge = "true" if (flags.get("recharge") or selfvol == "mustrecharge"
                           or mid == "hyperbeam") else "false"
-    return (name, typ, cat, power, accuracy, fixed, effect, effect_chance,
-            bstat, bstages, bfoe, bchance, high_crit, pp, recharge)
+    rec = m.get("recoil")  # [num, den] e.g. Double-Edge [33,100], Take Down [1,4], Struggle [1,2]
+    recoil_num, recoil_den = ((int(rec[0]), int(rec[1]))
+                              if isinstance(rec, (list, tuple)) and len(rec) == 2 else (0, 0))
+    # ignoreImmunity: explicit flag if set, else status moves default to true (Showdown runImmunity).
+    # So Thunder Wave (explicit false) respects type immunity; Confuse Ray / Glare ignore it.
+    ig = m.get("ignoreImmunity")
+    ignore_imm = ("true" if cat == "Category::Status" else "false") if ig is None else ("true" if ig else "false")
+    return (name, typ, cat, power, accuracy, fixed, effect, effect_chance, bstat, bstages,
+            bfoe, bchance, high_crit, pp, recharge, recoil_num, recoil_den, ignore_imm)
 
 
 def build_lines(correct, dex, moves) -> tuple[list[str], int, int]:
@@ -192,18 +201,19 @@ def build_lines(correct, dex, moves) -> tuple[list[str], int, int]:
     lines.append("struct MoveEntry { const char* name; Type type; Category category; "
                  "int power, accuracy, fixed; Effect effect; int effect_chance; "
                  "int boost_stat, boost_stages; bool boost_target_foe; int boost_chance; "
-                 "bool high_crit; int pp; bool recharge; };")
+                 "bool high_crit; int pp; bool recharge; int recoil_num, recoil_den; "
+                 "bool ignore_immunity; };")
     lines.append("inline const MoveEntry GEN1_MOVES[] = {")
     n_moves = 0
     for mid in sorted(moves, key=lambda k: moves[k].get("num", 0)):
         m = moves[mid]
         if type_to_enum(m.get("type", "")) == "Type::None":
             continue
-        (name, typ, cat, power, accuracy, fixed, effect, ec,
-         bstat, bstages, bfoe, bchance, high_crit, pp, recharge) = translate_move(mid, m)
+        (name, typ, cat, power, accuracy, fixed, effect, ec, bstat, bstages,
+         bfoe, bchance, high_crit, pp, recharge, rnum, rden, iimm) = translate_move(mid, m)
         lines.append(f'    {{"{name}", {typ}, {cat}, {power}, {accuracy}, {fixed}, '
                      f'{effect}, {ec}, {bstat}, {bstages}, {bfoe}, {bchance}, {high_crit}, {pp}, '
-                     f'{recharge}}},')
+                     f'{recharge}, {rnum}, {rden}, {iimm}}},')
         n_moves += 1
     lines += ["};", "", "}  // namespace cinnabar"]
     return lines, n_species, n_moves
@@ -241,7 +251,7 @@ def main() -> None:
     print("\n=== Sample translations ===")
     for mid in ("bodyslam", "psychic", "amnesia", "swordsdance", "slash", "thunderwave",
                 "recover", "seismictoss", "explosion", "growl", "blizzard", "icebeam", "hyperbeam",
-                "substitute"):
+                "substitute", "doubleedge", "takedown", "confuseray"):
         if mid in moves:
             print(f"  {mid:12s} -> {translate_move(mid, moves[mid])}")
 

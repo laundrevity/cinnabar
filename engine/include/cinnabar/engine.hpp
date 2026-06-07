@@ -28,7 +28,7 @@ enum class Result { Ongoing, P1Win, P2Win, Tie };
 
 // Primary or secondary move effect.
 enum class Effect { None, Paralyze, Sleep, Freeze, Burn, Poison, Heal, Rest, Reflect, SelfDestruct,
-                    Substitute };
+                    Substitute, Confuse, Counter };
 
 double type_effectiveness(Type attacking, Type defending);  // Gen 1 (provisional)
 
@@ -60,6 +60,10 @@ struct MoveData {
     bool high_crit = false;          // high crit-ratio moves (Slash, Razor Leaf, Crabhammer, ...)
     int pp = 0;                      // base PP (0 = untracked, e.g. hand-built test moves)
     bool recharge = false;           // Hyper Beam: user must spend next turn recharging unless it KO'd
+    int recoil_num = 0, recoil_den = 0;  // recoil to the user = floor(damage * num/den), min 1
+    bool ignore_immunity = false;        // skip the type-immunity check (Confuse Ray, Glare, ...)
+    int priority = 0;                    // turn-order bracket; Counter is -5 (moves last)
+    bool skip_lastdamage = false;        // does NOT reset the battle's last_damage (Counter, status)
 };
 
 struct Pokemon {
@@ -75,6 +79,7 @@ struct Pokemon {
     bool must_recharge = false;  // volatile: owes a Hyper Beam recharge turn; cleared on switch
     bool has_substitute = false; // volatile: a Substitute is up, absorbing damage; cleared on switch
     int sub_hp = 0;              // remaining Substitute HP (floor(maxhp/4)+1 when created)
+    int confuse_turns = 0;      // volatile: remaining confusion turns (0 = not confused); cleared on switch
     std::vector<const MoveData*> moves;
     std::vector<int> pp;  // current PP per move slot (parallel to moves); -1 = untracked/unlimited
 
