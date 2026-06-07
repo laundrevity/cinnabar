@@ -11,8 +11,11 @@ const path = require("path");
 const sim = require(path.resolve(__dirname, "../../server/pokemon-showdown"));
 const { Teams, Battle } = sim;
 
-const P1 = Teams.pack(Teams.import("Tauros\n- Earthquake\n"));
-const P2 = Teams.pack(Teams.import("Snorlax\n- Earthquake\n"));
+// Max EVs so Showdown uses max-StatExp stats (what real Gen 1 OU uses), matching the
+// engine's stat formula. Without this, customgame defaults to StatExp 0 (Tauros HP 290).
+const EVS = "EVs: 252 HP / 252 Atk / 252 Def / 252 SpA / 252 SpD / 252 Spe";
+const P1 = Teams.pack(Teams.import(`Tauros\n${EVS}\n- Earthquake\n`));
+const P2 = Teams.pack(Teams.import(`Snorlax\n${EVS}\n- Earthquake\n`));
 
 const seed = process.argv.slice(2, 6).map(Number);
 if (seed.length !== 4 || seed.some(Number.isNaN)) {
@@ -32,7 +35,6 @@ const snap = () => {
     const a = battle.sides[0].active[0];
     const b = battle.sides[1].active[0];
     return {
-        turn: battle.turn,
         p1_hp: a.hp, p1_maxhp: a.maxhp, p1_status: code(a.status),
         p2_hp: b.hp, p2_maxhp: b.maxhp, p2_status: code(b.status),
     };

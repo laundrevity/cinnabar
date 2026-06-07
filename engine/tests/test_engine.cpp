@@ -122,8 +122,8 @@ int main() {
 
     // Reflect halves physical damage taken (same seed, identical RNG draws).
     {
-        Battle b1(make_team(), make_team(), 6);
-        Battle b2(make_team(), make_team(), 6);
+        Battle b1(make_team(), make_team(), 1);  // seed chosen so Body Slam doesn't crit
+        Battle b2(make_team(), make_team(), 1);  // (a crit would ignore Reflect, see engine.cpp)
         b1.p1.active = b2.p1.active = 4;  // Tauros (fast) uses Body Slam (slot 0)
         b1.p2.active = b2.p2.active = 3;  // vs Snorlax (slow)
         b2.p2.mon().reflect = true;

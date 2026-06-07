@@ -190,7 +190,15 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
     const MoveData* mv = a.moves[moveidx];
     if (!mv) return;
 
-    if (mv->accuracy < 100 && rng.range(1, 100) > mv->accuracy) return;  // miss
+    // Accuracy — Showdown gen1 rolls randomChance(clamp(floor(acc*255/100),1,255), 256) for
+    // every non-self-targeting move, *including* 100%-accuracy ones (the 1/256 miss). Moves
+    // that target the user (Recover/Rest/Reflect) skip the roll.
+    bool self_targeting = mv->effect == Effect::Heal || mv->effect == Effect::Rest ||
+                          mv->effect == Effect::Reflect;
+    if (!self_targeting && mv->accuracy > 0) {
+        int acc = std::clamp(mv->accuracy * 255 / 100, 1, 255);
+        if (!rng.chance(acc, 256)) return;  // miss (includes the gen1 1/256)
+    }
 
     if (mv->fixed > 0) {
         if (combined_effectiveness(mv->type, d.species) == 0.0) return;
@@ -199,13 +207,25 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
         double mult = combined_effectiveness(mv->type, d.species);
         if (mult == 0.0) return;  // immune: no damage, no secondary
         bool stab = (mv->type == a.species->t1 || mv->type == a.species->t2);
-        bool crit = rng.chance(a.species->spe, 512);
+        // Crit — Showdown gen1 derives the chance from BASE species Speed, not the live stat:
+        // critChance = clamp(floor(baseSpe/2)*2, 1, 255), then /2 for a normal crit ratio.
+        int crit_chance = std::clamp((a.species->spe / 2) * 2, 1, 255) / 2;
+        bool crit = crit_chance > 0 && rng.chance(crit_chance, 256);
         bool physical = gen1_is_physical(mv->type);
         int atk = physical ? a.atk : a.spc;
         int def = physical ? d.def : d.spc;
-        if (physical && d.reflect) def *= 2;                                   // Reflect
-        if (mv->effect == Effect::SelfDestruct) def = std::max(1, def / 2);    // Explosion halves Def
-        if (physical && a.status == Status::Burn) atk = std::max(1, atk / 2);  // burn halves Attack
+        // Gen 1: a crit ignores the burn Attack-drop and screens (uses the unmodified stats).
+        if (!crit) {
+            if (physical && a.status == Status::Burn) atk = std::max(1, atk / 2);  // burn halves Atk
+            if (physical && d.reflect) def *= 2;                                   // Reflect doubles Def
+        }
+        // Gen 1 stat rollover: if attack or defense >= 256, divide BOTH by 4 (mod 256).
+        if (atk >= 256 || def >= 256) {
+            atk = std::max(1, (atk / 4) % 256);
+            def = (def / 4) % 256;
+            if (def == 0) def = 1;
+        }
+        if (mv->effect == Effect::SelfDestruct) def = std::max(1, def / 2);  // Explosion halves Def
         d.hp -= gen1_damage(a.level, mv->power, atk, def, stab, mult, crit, rng.range(217, 255));
     }
 

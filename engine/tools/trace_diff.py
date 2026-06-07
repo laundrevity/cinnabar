@@ -35,7 +35,6 @@ def our_trace(seed_u64):
         guard += 1
         b.step(move0(b, 0), move0(b, 1))
         tr.append({
-            "turn": b.turn,
             "p1_hp": b.active_hp(0), "p1_maxhp": b.active_max_hp(0), "p1_status": b.active_status(0),
             "p2_hp": b.active_hp(1), "p2_maxhp": b.active_max_hp(1), "p2_status": b.active_status(1),
         })
