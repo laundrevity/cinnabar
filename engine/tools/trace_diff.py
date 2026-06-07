@@ -53,7 +53,49 @@ def showdown_trace(words):
     return json.loads(out.stdout)
 
 
+def words_to_u64(w):
+    return (w[0] << 48) | (w[1] << 32) | (w[2] << 16) | w[3]
+
+
+def run_sweep(n):
+    out = subprocess.run(
+        ["node", str(HERE / "ref_trace.js"), "--sweep", str(n)],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        print("Showdown sim failed:\n" + out.stderr, file=sys.stderr)
+        sys.exit(1)
+    sweep = json.loads(out.stdout)["sweep"]
+
+    passed, first_fail = 0, None
+    for entry in sweep:
+        ot = our_trace(words_to_u64(entry["words"]))["trace"]
+        tt = entry["trace"]
+        if len(ot) == len(tt) and all(a == b for a, b in zip(ot, tt)):
+            passed += 1
+        elif first_fail is None:
+            first_fail = (entry["words"], ot, tt)
+
+    print(f"sweep: {passed}/{len(sweep)} battles identical")
+    if first_fail:
+        words, ot, tt = first_fail
+        m = min(len(ot), len(tt))
+        j = next((i for i in range(m) if ot[i] != tt[i]), m)
+        print(f"\nfirst failing seed words {words}:")
+        for k in range(max(0, j - 1), min(m, j + 2)):
+            mark = "  <-- differs" if k < m and ot[k] != tt[k] else ""
+            print(f"  turn {k + 1}:")
+            print(f"    ours     {ot[k]}{mark}")
+            print(f"    showdown {tt[k]}")
+        if len(ot) != len(tt):
+            print(f"  (trace lengths differ: ours {len(ot)} vs showdown {len(tt)})")
+
+
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "sweep":
+        run_sweep(int(sys.argv[2]) if len(sys.argv) >= 3 else 100)
+        return
+
     words = [int(x) for x in sys.argv[1:5]] if len(sys.argv) >= 5 else [1, 2, 3, 4]
     seed_u64 = (words[0] << 48) | (words[1] << 32) | (words[2] << 16) | words[3]
 

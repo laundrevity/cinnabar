@@ -6,6 +6,10 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#ifdef CINNABAR_DEBUG
+#include <cstdio>
+#endif
+
 namespace cinnabar {
 
 double type_effectiveness(Type attacking, Type defending) {
@@ -203,6 +207,7 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
     if (mv->fixed > 0) {
         if (combined_effectiveness(mv->type, d.species) == 0.0) return;
         d.hp -= mv->fixed;
+        if (d.hp < 0) d.hp = 0;
     } else if (mv->power > 0 && !d.fainted()) {
         double mult = combined_effectiveness(mv->type, d.species);
         if (mult == 0.0) return;  // immune: no damage, no secondary
@@ -226,7 +231,15 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
             if (def == 0) def = 1;
         }
         if (mv->effect == Effect::SelfDestruct) def = std::max(1, def / 2);  // Explosion halves Def
-        d.hp -= gen1_damage(a.level, mv->power, atk, def, stab, mult, crit, rng.range(217, 255));
+        int roll = rng.range(217, 255);
+        int dmg = gen1_damage(a.level, mv->power, atk, def, stab, mult, crit, roll);
+#ifdef CINNABAR_DEBUG
+        std::fprintf(stderr, "[hit] %s->%s atk=%d def=%d stab=%d mult=%.2f crit=%d roll=%d dmg=%d\n",
+                     a.species->name.c_str(), d.species->name.c_str(), atk, def,
+                     static_cast<int>(stab), mult, static_cast<int>(crit), roll, dmg);
+#endif
+        d.hp -= dmg;
+        if (d.hp < 0) d.hp = 0;  // Showdown caps damage at remaining HP (fainted sits at 0)
     }
 
     if (mv->effect == Effect::SelfDestruct) a.hp = 0;
@@ -241,8 +254,10 @@ void try_move(Side& as, Side& ds, int moveidx, RNG& rng) {
 
 void residual(Pokemon& p) {
     if (p.fainted()) return;
-    if (p.status == Status::Burn || p.status == Status::Poison)
+    if (p.status == Status::Burn || p.status == Status::Poison) {
         p.hp -= std::max(1, p.max_hp / 16);
+        if (p.hp < 0) p.hp = 0;
+    }
 }
 
 void do_switch(Side& s, int idx) {
