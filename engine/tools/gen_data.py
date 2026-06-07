@@ -138,6 +138,8 @@ def translate_move(mid: str, m: dict) -> tuple:
         effect, effect_chance = "Effect::Confuse", 100  # Confuse Ray
     elif mid == "counter":
         effect, effect_chance = "Effect::Counter", 100
+    elif m.get("volatileStatus") == "partiallytrapped":
+        effect, effect_chance = "Effect::Trap", 100  # Wrap / Bind / Fire Spin / Clamp
     elif m.get("status") in STATUS_EFFECT:
         effect, effect_chance = STATUS_EFFECT[m["status"]], 100
     elif m.get("boosts"):
@@ -264,7 +266,7 @@ def main() -> None:
     print("\n=== Sample translations ===")
     for mid in ("bodyslam", "psychic", "amnesia", "swordsdance", "slash", "thunderwave",
                 "recover", "seismictoss", "explosion", "growl", "blizzard", "icebeam", "hyperbeam",
-                "substitute", "doubleedge", "takedown", "confuseray", "counter"):
+                "substitute", "doubleedge", "takedown", "confuseray", "counter", "wrap"):
         if mid in moves:
             print(f"  {mid:12s} -> {translate_move(mid, moves[mid])}")
 

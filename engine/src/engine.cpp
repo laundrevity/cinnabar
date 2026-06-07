@@ -208,6 +208,7 @@ bool can_act(Pokemon& p, RNG& rng) {
         default:
             break;
     }
+    if (p.partial_trapped > 0) return false;  // partially trapped (Wrap): lose the turn (priority 9)
     if (p.must_recharge) {        // Hyper Beam recharge: spend this turn doing nothing, clear the
         p.must_recharge = false;  // flag, and skip the paralysis roll (priority 7 > par's 2).
         return false;
@@ -368,8 +369,10 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
     }
 
     // Accuracy — Showdown gen1 rolls randomChance(clamp(floor(acc*255/100),1,255), 256) for
-    // every non-self-targeting move, *including* 100%-accuracy ones (the 1/256 miss).
-    if (!self_targeting && mv->accuracy > 0) {
+    // every non-self-targeting move, *including* 100%-accuracy ones (the 1/256 miss). A continuing
+    // partial-trap (Wrap) auto-hits its locked target, so it skips the roll after the first turn.
+    bool wrap_continue = (mv->effect == Effect::Trap && a.wrap_turns > 0);
+    if (!self_targeting && !wrap_continue && mv->accuracy > 0) {
         int acc = std::clamp(mv->accuracy * 255 / 100, 1, 255);
         if (!rng.chance(acc, 256)) {  // miss (includes the gen1 1/256)
             if (mv->effect == Effect::SelfDestruct) a.hp = 0;  // gen1: Explosion faints user on a miss
@@ -401,7 +404,20 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
         return;
     }
 
-    if (mv->fixed > 0) {
+    if (mv->effect == Effect::Trap && wrap_continue) {
+        // Continuing partial-trap: re-deal the STORED first-turn damage — Gen 1 partial-trap damage
+        // is fixed, so no crit/damage/accuracy rolls happen on continuation (keeps RNG aligned).
+        int dmg = a.wrap_damage;
+        if (d.has_substitute) {
+            d.sub_hp -= dmg > d.sub_hp ? d.sub_hp : dmg;
+            if (d.sub_hp <= 0) { d.has_substitute = false; d.sub_hp = 0; }
+            last_damage = dmg;
+        } else {
+            int hit = dmg < d.hp ? dmg : d.hp;
+            d.hp -= hit;
+            last_damage = hit;
+        }
+    } else if (mv->fixed > 0) {
         if (combined_effectiveness(mv->type, d.species) == 0.0) return;
         if (d.has_substitute) {  // fixed damage hits the sub (no overflow to real HP)
             d.sub_hp -= mv->fixed > d.sub_hp ? d.sub_hp : mv->fixed;
@@ -475,6 +491,24 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
     // Hyper Beam: the user owes a recharge turn — UNLESS the move KO'd the target (the famous
     // Gen 1 "no recharge on KO"). Reaching here means the move hit (a miss/immunity returned early).
     if (mv->recharge && !d.fainted()) a.must_recharge = true;
+    if (mv->effect == Effect::Trap) {
+        // Partial-trap (Wrap/Bind/Fire Spin/Clamp): lock the user re-using this move for a sampled
+        // 2-5 turns and hold the foe (it loses its turn). Durations tick at END of turn (step()),
+        // so the foe stays trapped through the final turn. Each non-final turn re-holds the foe
+        // (Showdown's onAfterMove re-adds partiallytrapped unless this is the last turn).
+        // (fakepartiallytrapped — the cosmetic "free turn" display flag — is intentionally omitted.)
+        if (!wrap_continue) {  // first hit: sample the lock duration and store the fixed damage
+            static const int DUR[8] = {2, 2, 2, 3, 3, 3, 4, 5};
+            a.wrap_turns = DUR[rng.random(8)];  // sampled even on a KO (onStart runs before removal)
+            a.wrap_idx = moveidx;
+            a.wrap_damage = recoil_base;
+        }
+        if (d.fainted()) {               // a KO removes the lock
+            a.wrap_turns = 0; a.wrap_idx = -1;
+        } else if (a.wrap_turns != 1) {  // not the final turn -> keep the foe held
+            d.partial_trapped = 2;
+        }
+    }
 }
 
 void try_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
@@ -498,6 +532,7 @@ void do_switch(Side& s, int idx) {
     in.must_recharge = false;  // volatiles clear on switch (a recharge can't carry to a new mon)
     in.has_substitute = false; in.sub_hp = 0;  // a Substitute does not persist across a switch
     in.confuse_turns = 0;      // confusion clears on switch out
+    in.wrap_turns = 0; in.wrap_idx = -1; in.wrap_damage = 0; in.partial_trapped = 0;  // trap clears on switch
     // Gen 1: stat stages reset on switch — recompute modified stats from the stored stats...
     in.boost_atk = in.boost_def = in.boost_spc = in.boost_spe = 0;
     in.m_atk = in.atk; in.m_def = in.def; in.m_spc = in.spc; in.m_spe = in.spe;
@@ -531,6 +566,10 @@ std::vector<Choice> Battle::choices(int player) const {
     }
     if (s.mon().must_recharge) {  // Hyper Beam recharge: locked to a single no-op move, no switch
         out.push_back({ChoiceKind::Move, -2});
+        return out;
+    }
+    if (s.mon().wrap_turns > 0) {  // partial-trap: locked re-using the move, no switch
+        out.push_back({ChoiceKind::Move, s.mon().wrap_idx});
         return out;
     }
     int avail = 0;
@@ -610,6 +649,15 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
         if (result() == Result::Ongoing) { if (tie) rng.random(0, 2); act1(); }
     }
     if (result() == Result::Ongoing && tie) { rng.random(0, 2); rng.random(0, 2); }
+
+    // Partial-trap durations tick down at end of turn (Showdown's duration system), so the foe
+    // stays held through the wrapper's final turn and is freed the turn after.
+    auto tick = [](Pokemon& m) {
+        if (m.wrap_turns > 0 && --m.wrap_turns == 0) m.wrap_idx = -1;
+        if (m.partial_trapped > 0) --m.partial_trapped;
+    };
+    tick(p1.mon());
+    tick(p2.mon());
 
     p1.must_switch = p1.mon().fainted() && p1.has_alive_bench();
     p2.must_switch = p2.mon().fainted() && p2.has_alive_bench();

@@ -28,7 +28,7 @@ enum class Result { Ongoing, P1Win, P2Win, Tie };
 
 // Primary or secondary move effect.
 enum class Effect { None, Paralyze, Sleep, Freeze, Burn, Poison, Heal, Rest, Reflect, SelfDestruct,
-                    Substitute, Confuse, Counter };
+                    Substitute, Confuse, Counter, Trap };
 
 double type_effectiveness(Type attacking, Type defending);  // Gen 1 (provisional)
 
@@ -80,6 +80,10 @@ struct Pokemon {
     bool has_substitute = false; // volatile: a Substitute is up, absorbing damage; cleared on switch
     int sub_hp = 0;              // remaining Substitute HP (floor(maxhp/4)+1 when created)
     int confuse_turns = 0;      // volatile: remaining confusion turns (0 = not confused); cleared on switch
+    int wrap_turns = 0;         // wrapper: partial-trap lock duration remaining (re-uses wrap_idx while >0)
+    int wrap_idx = -1;          // the move slot the wrapper is locked into (Wrap/Bind/Fire Spin/Clamp)
+    int wrap_damage = 0;        // first-turn damage, re-dealt each turn (Gen 1 partial-trap is fixed)
+    int partial_trapped = 0;    // victim: partiallytrapped duration remaining (loses its turn while >0)
     std::vector<const MoveData*> moves;
     std::vector<int> pp;  // current PP per move slot (parallel to moves); -1 = untracked/unlimited
 
