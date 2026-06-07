@@ -392,7 +392,8 @@ void do_switch(Side& s, int idx) {
     // ...then the paralysis/burn stat drops are re-applied on switch-in (a Gen 1 volatile).
     if (in.status == Status::Paralysis) modify_stat(in, 3, 0.25);
     if (in.status == Status::Burn) modify_stat(in, 0, 0.5);
-    residual(in);  // Gen 1: a burned/poisoned mon takes 1/16 on switch-in (onAfterSwitchInSelf)
+    // Note: Gen 1 does NOT tick burn/poison on switch-in (the conditions' onAfterSwitchInSelf
+    // isn't triggered by gen1's engine — verified by differential testing).
 }
 }  // namespace
 
@@ -464,9 +465,10 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
 #endif
 
     // Burn/poison ticks 1/16 right after the afflicted mon's own move (onAfterMoveSelf),
-    // including a turn it's fully paralyzed/asleep (the move action still resolves).
-    auto act1 = [&]() { if (m1) { try_move(p1, p2, c1.index, rng); residual(p1.mon()); } };
-    auto act2 = [&]() { if (m2) { try_move(p2, p1, c2.index, rng); residual(p2.mon()); } };
+    // including a turn it's fully paralyzed/asleep (the move action still resolves) — but NOT
+    // on a turn its move faints the target (Gen 1: AfterMoveSelf needs target.hp > 0).
+    auto act1 = [&]() { if (m1) { try_move(p1, p2, c1.index, rng); if (!p2.mon().fainted()) residual(p1.mon()); } };
+    auto act2 = [&]() { if (m2) { try_move(p2, p1, c2.index, rng); if (!p1.mon().fainted()) residual(p2.mon()); } };
     // If a side has no Pokémon left after the first move (Self-Destruct, Struggle recoil, or a
     // residual KO), the battle is over: Showdown stops the turn — no second move, no shuffles.
     if (p1_first) {
