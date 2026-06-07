@@ -35,6 +35,8 @@ static const MoveData EARTHQUAKE{"Earthquake", Type::Ground, Category::Physical,
 static const MoveData BLIZZARD{"Blizzard", Type::Ice, Category::Special, 120, 90, 0, Effect::Freeze, 10};
 static const MoveData HYPER_BEAM{"Hyper Beam", Type::Normal, Category::Physical, 150, 90};  // recharge not modelled
 static const MoveData REST{"Rest", Type::Psychic, Category::Status, 0, 100, 0, Effect::Rest, 100};
+static const MoveData AMNESIA{"Amnesia", Type::Psychic, Category::Status, 0, 100, 0, Effect::None, 0, 2, 2, false, 0};
+static const MoveData SWORDS_DANCE{"Swords Dance", Type::Normal, Category::Status, 0, 100, 0, Effect::None, 0, 0, 2, false, 0};
 
 static Side make_team() {
     return Side{{
@@ -75,6 +77,26 @@ int main() {
         CHECK_EQ(r2.random(100), 85);
         RNG r3(0x123456789ABCDEF0ULL);
         CHECK_EQ(r3.range(217, 255), 250);  // == Showdown PRNG.random(217, 256)
+    }
+
+    // Stat stages: Amnesia (+2 Special) and Swords Dance (+2 Attack) each double the stat.
+    {
+        Side a{{make_pokemon(&species("Alakazam"), {&AMNESIA})}};
+        Side b{{make_pokemon(&species("Snorlax"), {&BODY_SLAM})}};
+        Battle bt(std::move(a), std::move(b), 1);
+        int base_spc = bt.p1.mon().spc;
+        bt.step(move_choice(0), pass_choice());  // Amnesia (self, +2 Special)
+        CHECK_EQ(bt.p1.mon().boost_spc, 2);
+        CHECK_EQ(bt.p1.mon().m_spc, base_spc * 2);
+        CHECK_EQ(bt.p1.mon().spc, base_spc);     // stored stat is unchanged
+    }
+    {
+        Side a{{make_pokemon(&species("Tauros"), {&SWORDS_DANCE})}};
+        Side b{{make_pokemon(&species("Snorlax"), {&BODY_SLAM})}};
+        Battle bt(std::move(a), std::move(b), 1);
+        int base_atk = bt.p1.mon().atk;
+        bt.step(move_choice(0), pass_choice());  // Swords Dance (self, +2 Attack)
+        CHECK_EQ(bt.p1.mon().m_atk, base_atk * 2);
     }
 
     // Switching: active changes and the outgoing mon's Reflect clears.

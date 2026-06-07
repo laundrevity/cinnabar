@@ -51,13 +51,20 @@ struct MoveData {
     int fixed = 0;      // fixed HP damage (Seismic Toss = 100), else 0
     Effect effect = Effect::None;
     int effect_chance = 0;  // % chance of the effect (status moves use 100)
+    // Stat-stage change. boost_stat: -1 none, 0=atk 1=def 2=spc 3=spe (4=acc 5=eva, unmodelled).
+    int boost_stat = -1;
+    int boost_stages = 0;            // signed number of stages
+    bool boost_target_foe = false;   // false: user (Amnesia/Swords Dance); true: foe (Psychic 2ndary)
+    int boost_chance = 0;            // 0 = always (status move); else % chance (a 2ndary)
 };
 
 struct Pokemon {
     const Species* species = nullptr;
     int level = 100;
     int max_hp = 0, hp = 0;
-    int atk = 0, def = 0, spc = 0, spe = 0;
+    int atk = 0, def = 0, spc = 0, spe = 0;          // stored (base) stats — immutable in battle
+    int m_atk = 0, m_def = 0, m_spc = 0, m_spe = 0;  // modifiedStats (boosts + burn/paralysis)
+    int boost_atk = 0, boost_def = 0, boost_spc = 0, boost_spe = 0;  // stages, -6..+6
     Status status = Status::None;
     int sleep_turns = 0;
     bool reflect = false;  // volatile: Reflect screen, cleared on switch out

@@ -3,6 +3,7 @@
 #include "cinnabar/gen1_data.hpp"  // generated from Showdown: GEN1_TYPE_CHART, GEN1_SPECIES
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -41,7 +42,11 @@ const MoveData& move(const std::string& name) {
         auto add = [&](MoveData md) { m.emplace(md.name, md); };
         // Hand-coded for now (the moves our teams use); a codegen pass will source
         // these from Showdown like gen1_data.hpp does for species.
-        add({"Psychic", Type::Psychic, Category::Special, 90, 100});
+        // Psychic: 33% chance to lower the target's Special by 1 stage (Gen 1 secondary).
+        add({"Psychic", Type::Psychic, Category::Special, 90, 100, 0, Effect::None, 0, 2, -1, true, 33});
+        add({"Amnesia", Type::Psychic, Category::Status, 0, 100, 0, Effect::None, 0, 2, 2, false, 0});
+        add({"Swords Dance", Type::Normal, Category::Status, 0, 100, 0, Effect::None, 0, 0, 2, false, 0});
+        add({"Agility", Type::Psychic, Category::Status, 0, 100, 0, Effect::None, 0, 3, 2, false, 0});
         add({"Thunder Wave", Type::Electric, Category::Status, 0, 100, 0, Effect::Paralyze, 100});
         add({"Recover", Type::Normal, Category::Status, 0, 100, 0, Effect::Heal, 100});
         add({"Soft-Boiled", Type::Normal, Category::Status, 0, 100, 0, Effect::Heal, 100});
@@ -99,6 +104,10 @@ Pokemon make_pokemon(const Species* s, std::vector<const MoveData*> moves, int l
     p.def = stat(s->def);
     p.spc = stat(s->spc);
     p.spe = stat(s->spe);
+    p.m_atk = p.atk;  // modifiedStats start equal to stored stats
+    p.m_def = p.def;
+    p.m_spc = p.spc;
+    p.m_spe = p.spe;
     p.moves = std::move(moves);
     return p;
 }
@@ -130,7 +139,44 @@ bool Side::all_fainted() const {
 
 namespace {
 int effective_speed(const Pokemon& p) {
-    return p.status == Status::Paralysis ? p.spe / 4 : p.spe;
+    return p.m_spe;  // paralysis (÷4) and Agility are baked into the modified Speed stat
+}
+
+// Gen 1 stat-stage machinery. Stored stats are immutable; modifiedStats carry boosts plus
+// the burn/paralysis drops. boostBy resets modifiedStats from stored then applies the stage
+// multiplier — which is why it *discards* an existing burn/paralysis drop (a real Gen 1 bug).
+const double BOOST_POS[7] = {1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0};
+const int BOOST_NEG[7] = {100, 66, 50, 40, 33, 28, 25};
+
+int& stored_ref(Pokemon& p, int s) {
+    switch (s) { case 0: return p.atk; case 1: return p.def; case 2: return p.spc; default: return p.spe; }
+}
+int& mod_ref(Pokemon& p, int s) {
+    switch (s) { case 0: return p.m_atk; case 1: return p.m_def; case 2: return p.m_spc; default: return p.m_spe; }
+}
+int& stage_ref(Pokemon& p, int s) {
+    switch (s) { case 0: return p.boost_atk; case 1: return p.boost_def; case 2: return p.boost_spc; default: return p.boost_spe; }
+}
+
+// Recompute modifiedStats[s] from stored stat + current stage (Showdown's boostBy path).
+void recompute_stat(Pokemon& p, int s) {
+    int stored = stored_ref(p, s), stage = stage_ref(p, s);
+    double v = stage >= 0 ? stored * BOOST_POS[stage] : stored * (BOOST_NEG[-stage] / 100.0);
+    long iv = static_cast<long>(std::floor(v));
+    iv = std::clamp<long>(iv, 1, 999);
+    mod_ref(p, s) = static_cast<int>(iv);
+}
+
+// modifyStat: multiply the *current* modifiedStat (burn ×0.5 Atk, paralysis ×0.25 Spe), min 1.
+void modify_stat(Pokemon& p, int s, double mult) {
+    long v = static_cast<long>(std::floor(mod_ref(p, s) * mult));
+    mod_ref(p, s) = static_cast<int>(std::max<long>(1, v));
+}
+
+void do_boost(Pokemon& p, int s, int delta) {
+    int& st = stage_ref(p, s);
+    st = std::clamp(st + delta, -6, 6);
+    recompute_stat(p, s);
 }
 
 // Gen 1: a move is physical/special purely by its type (no per-move split).
@@ -210,13 +256,31 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
     if (tgt.status != Status::None) return;  // already statused -> set-status fails (roll spent)
 
     switch (mv->effect) {
-        case Effect::Paralyze: tgt.status = Status::Paralysis; break;
+        case Effect::Paralyze: tgt.status = Status::Paralysis; modify_stat(tgt, 3, 0.25); break;
         case Effect::Sleep:    tgt.status = Status::Sleep; tgt.sleep_turns = rng.range(1, 7); break;
         case Effect::Freeze:   tgt.status = Status::Freeze; break;
-        case Effect::Burn:     tgt.status = Status::Burn; break;
+        case Effect::Burn:     tgt.status = Status::Burn; modify_stat(tgt, 0, 0.5); break;
         case Effect::Poison:   tgt.status = Status::Poison; break;
         default: break;
     }
+}
+
+// Stat-stage changes: self boosts (Amnesia/Swords Dance/Agility) or a damaging move's foe
+// secondary (Psychic's −Special). Mirrors Showdown's moveData.boosts block, including the
+// quirk that applying boosts re-applies the user's foe's paralysis/burn stat drop.
+void apply_boosts(const MoveData* mv, Pokemon& user, Pokemon& foe, RNG& rng) {
+    if (mv->boost_stat < 0 || mv->boost_stat > 3) return;  // only atk/def/spc/spe modelled
+    Pokemon& tgt = mv->boost_target_foe ? foe : user;
+    if (mv->boost_target_foe) {
+        if (tgt.fainted()) return;  // secondary needs a surviving target
+        if (mv->boost_chance < 100) {
+            int num = (mv->boost_chance * 256 + 99) / 100;  // ceil(chance * 256 / 100)
+            if (!rng.chance(num, 256)) return;
+        }
+    }
+    do_boost(tgt, mv->boost_stat, mv->boost_stages);
+    if (foe.status == Status::Paralysis) modify_stat(foe, 3, 0.25);  // Gen 1 re-application quirk
+    if (foe.status == Status::Burn) modify_stat(foe, 0, 0.5);
 }
 
 void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
@@ -230,7 +294,8 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
     // every non-self-targeting move, *including* 100%-accuracy ones (the 1/256 miss). Moves
     // that target the user (Recover/Rest/Reflect) skip the roll.
     bool self_targeting = mv->effect == Effect::Heal || mv->effect == Effect::Rest ||
-                          mv->effect == Effect::Reflect;
+                          mv->effect == Effect::Reflect ||
+                          (mv->boost_stat >= 0 && !mv->boost_target_foe);  // Amnesia/SD/Agility
     if (!self_targeting && mv->accuracy > 0) {
         int acc = std::clamp(mv->accuracy * 255 / 100, 1, 255);
         if (!rng.chance(acc, 256)) return;  // miss (includes the gen1 1/256)
@@ -249,12 +314,14 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
         int crit_chance = std::clamp((a.species->spe / 2) * 2, 1, 255) / 2;
         bool crit = crit_chance > 0 && rng.chance(crit_chance, 256);
         bool physical = gen1_is_physical(mv->type);
-        int atk = physical ? a.atk : a.spc;
-        int def = physical ? d.def : d.spc;
-        // Gen 1: a crit ignores the burn Attack-drop and screens (uses the unmodified stats).
-        if (!crit) {
-            if (physical && a.status == Status::Burn) atk = std::max(1, atk / 2);  // burn halves Atk
-            if (physical && d.reflect) def *= 2;                                   // Reflect doubles Def
+        int atk, def;
+        if (crit) {                              // a crit ignores boosts, burn, and screens
+            atk = physical ? a.atk : a.spc;      // stored (unmodified) stats
+            def = physical ? d.def : d.spc;
+        } else {
+            atk = physical ? a.m_atk : a.m_spc;  // modifiedStats (boosts + burn drop)
+            def = physical ? d.m_def : d.m_spc;
+            if (physical && d.reflect) def *= 2;  // Reflect doubles Def (a screen, not on crit)
         }
         // Gen 1 stat rollover: if attack or defense >= 256, divide BOTH by 4 (mod 256).
         if (atk >= 256 || def >= 256) {
@@ -277,6 +344,7 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
 
     if (mv->effect == Effect::SelfDestruct) a.hp = 0;
     apply_effect(mv, a, d, rng);
+    apply_boosts(mv, a, d, rng);
 }
 
 void try_move(Side& as, Side& ds, int moveidx, RNG& rng) {
@@ -343,6 +411,9 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
     bool m2 = c2.kind == ChoiceKind::Move;
     int s1 = effective_speed(p1.mon()), s2 = effective_speed(p2.mon());
     bool p1_first = (s1 != s2) ? (s1 > s2) : rng.chance(1, 2);
+#ifdef CINNABAR_DEBUG
+    std::fprintf(stderr, "[turn %d] s1=%d s2=%d p1_first=%d\n", turn, s1, s2, static_cast<int>(p1_first));
+#endif
 
     auto act1 = [&]() { if (m1) try_move(p1, p2, c1.index, rng); };
     auto act2 = [&]() { if (m2) try_move(p2, p1, c2.index, rng); };
