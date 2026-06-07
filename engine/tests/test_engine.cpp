@@ -18,13 +18,8 @@ static int failures = 0;
         if (_a != _b) { std::printf("FAIL %s:%d  %s==%s (%ld vs %ld)\n", __FILE__, __LINE__, #a, #b, _a, _b); ++failures; } \
     } while (0)
 
-// --- provisional scoped data (to be generated from Showdown) ---
-static const Species ALAKAZAM{"Alakazam", Type::Psychic, Type::None, 55, 50, 45, 135, 120};
-static const Species CHANSEY{"Chansey", Type::Normal, Type::None, 250, 5, 5, 105, 50};
-static const Species EXEGGUTOR{"Exeggutor", Type::Grass, Type::Psychic, 95, 95, 85, 125, 55};
-static const Species SNORLAX{"Snorlax", Type::Normal, Type::None, 160, 110, 65, 65, 30};
-static const Species TAUROS{"Tauros", Type::Normal, Type::None, 75, 100, 95, 70, 110};
-static const Species STARMIE{"Starmie", Type::Water, Type::Psychic, 60, 75, 85, 100, 115};
+// Species come from the generated gen1_data.hpp via species("Name"). Moves stay
+// hand-coded here for now (move-effect codegen is a later slice).
 
 static const MoveData PSYCHIC{"Psychic", Type::Psychic, Category::Special, 90, 100};
 static const MoveData THUNDER_WAVE{"Thunder Wave", Type::Electric, Category::Status, 0, 100, 0, Effect::Paralyze, 100};
@@ -43,22 +38,22 @@ static const MoveData REST{"Rest", Type::Psychic, Category::Status, 0, 100, 0, E
 
 static Side make_team() {
     return Side{{
-        make_pokemon(&ALAKAZAM, {&PSYCHIC, &THUNDER_WAVE, &RECOVER, &SEISMIC_TOSS}),
-        make_pokemon(&CHANSEY, {&ICE_BEAM, &THUNDERBOLT, &THUNDER_WAVE, &SOFT_BOILED}),
-        make_pokemon(&EXEGGUTOR, {&PSYCHIC, &SLEEP_POWDER, &EXPLOSION}),
-        make_pokemon(&SNORLAX, {&BODY_SLAM, &EARTHQUAKE, &EXPLOSION, &REST}),
-        make_pokemon(&TAUROS, {&BODY_SLAM, &EARTHQUAKE, &BLIZZARD, &HYPER_BEAM}),
-        make_pokemon(&STARMIE, {&THUNDERBOLT, &ICE_BEAM, &RECOVER, &THUNDER_WAVE}),
+        make_pokemon(&species("Alakazam"), {&PSYCHIC, &THUNDER_WAVE, &RECOVER, &SEISMIC_TOSS}),
+        make_pokemon(&species("Chansey"), {&ICE_BEAM, &THUNDERBOLT, &THUNDER_WAVE, &SOFT_BOILED}),
+        make_pokemon(&species("Exeggutor"), {&PSYCHIC, &SLEEP_POWDER, &EXPLOSION}),
+        make_pokemon(&species("Snorlax"), {&BODY_SLAM, &EARTHQUAKE, &EXPLOSION, &REST}),
+        make_pokemon(&species("Tauros"), {&BODY_SLAM, &EARTHQUAKE, &BLIZZARD, &HYPER_BEAM}),
+        make_pokemon(&species("Starmie"), {&THUNDERBOLT, &ICE_BEAM, &RECOVER, &THUNDER_WAVE}),
     }};
 }
 
 int main() {
     // Gen 1 stats + damage formula + type chart (foundation).
-    Pokemon t = make_pokemon(&TAUROS, {&BODY_SLAM});
+    Pokemon t = make_pokemon(&species("Tauros"), {&BODY_SLAM});
     CHECK_EQ(t.max_hp, 353);
     CHECK_EQ(t.atk, 298);
     CHECK_EQ(t.spe, 318);
-    CHECK_EQ(make_pokemon(&SNORLAX, {}).max_hp, 523);
+    CHECK_EQ(make_pokemon(&species("Snorlax"), {}).max_hp, 523);
     CHECK_EQ(gen1_damage(100, 100, 298, 298, false, 1.0, false, 255), 86);
     CHECK_EQ(gen1_damage(100, 100, 298, 298, false, 1.0, true, 255), 166);
     CHECK_EQ(gen1_damage(100, 100, 298, 298, true, 2.0, false, 255), 258);

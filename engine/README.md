@@ -32,9 +32,10 @@ freeze thaw, PP/Struggle, stat stages, Hyper Beam recharge, and a Showdown-bit-c
 
 1. **Differential testing against Showdown** is the source of truth: identical battle + RNG
    through this engine and Showdown's gen1 sim (our submodule), diffed turn-for-turn. (Next.)
-2. **Generate static data from Showdown**, don't hand-type it. The species/move/type-chart data
-   here is *provisional, hand-encoded* and must be replaced by data generated from Showdown's
-   gen1 data files. Hand-typed game data is a fidelity-bug factory.
+2. **Static data is generated from Showdown** — `tools/gen_data.py` pulls poke-env's Gen 1 data
+   and emits `include/cinnabar/gen1_data.hpp` (the type chart + all 151 species' base stats); the
+   engine sources both from there. The audit confirmed the hand-coded chart already matched the
+   oracle. (Move data with effects is still hand-coded in the tests — next codegen target.)
 
 ## Roadmap
 
@@ -50,8 +51,10 @@ freeze thaw, PP/Struggle, stat stages, Hyper Beam recharge, and a Showdown-bit-c
 
 ```
 engine/
-  CMakeLists.txt                # build (static lib + ctest)
-  include/cinnabar/engine.hpp   # public API
-  src/engine.cpp                # mechanics + (provisional) type chart
-  tests/test_engine.cpp         # unit tests (hand-computed expectations)
+  CMakeLists.txt                    # build (static lib + ctest)
+  include/cinnabar/engine.hpp       # public API
+  include/cinnabar/gen1_data.hpp    # GENERATED: type chart + 151 species (do not edit)
+  src/engine.cpp                    # mechanics; type chart + species from gen1_data.hpp
+  tests/test_engine.cpp             # unit tests (hand-computed expectations)
+  tools/gen_data.py                 # regenerate gen1_data.hpp from Showdown (poke-env)
 ```

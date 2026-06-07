@@ -1,64 +1,34 @@
 #include "cinnabar/engine.hpp"
 
+#include "cinnabar/gen1_data.hpp"  // generated from Showdown: GEN1_TYPE_CHART, GEN1_SPECIES
+
 #include <algorithm>
+#include <stdexcept>
+#include <unordered_map>
 
 namespace cinnabar {
 
-namespace {
-constexpr int N = 15;  // real types (excludes None)
-int CHART[N][N];
-bool chart_ready = false;
-
-void se(int a, int d) { CHART[a][d] = 200; }
-void nve(int a, int d) { CHART[a][d] = 50; }
-void imm(int a, int d) { CHART[a][d] = 0; }
-
-void build_chart() {
-    for (int i = 0; i < N; ++i)
-        for (int j = 0; j < N; ++j) CHART[i][j] = 100;
-    using T = Type;
-    auto A = [](T t) { return static_cast<int>(t); };
-
-    nve(A(T::Normal), A(T::Rock));      imm(A(T::Normal), A(T::Ghost));
-    se(A(T::Fighting), A(T::Normal));   se(A(T::Fighting), A(T::Rock));   se(A(T::Fighting), A(T::Ice));
-    nve(A(T::Fighting), A(T::Flying));  nve(A(T::Fighting), A(T::Poison)); nve(A(T::Fighting), A(T::Bug));
-    nve(A(T::Fighting), A(T::Psychic)); imm(A(T::Fighting), A(T::Ghost));
-    se(A(T::Flying), A(T::Fighting));   se(A(T::Flying), A(T::Bug));      se(A(T::Flying), A(T::Grass));
-    nve(A(T::Flying), A(T::Rock));      nve(A(T::Flying), A(T::Electric));
-    se(A(T::Poison), A(T::Bug));        se(A(T::Poison), A(T::Grass));    // Gen 1: Poison SE vs Bug
-    nve(A(T::Poison), A(T::Poison));    nve(A(T::Poison), A(T::Ground));  nve(A(T::Poison), A(T::Rock));
-    nve(A(T::Poison), A(T::Ghost));
-    se(A(T::Ground), A(T::Poison));     se(A(T::Ground), A(T::Rock));     se(A(T::Ground), A(T::Fire));
-    se(A(T::Ground), A(T::Electric));   nve(A(T::Ground), A(T::Grass));   nve(A(T::Ground), A(T::Bug));
-    imm(A(T::Ground), A(T::Flying));
-    se(A(T::Rock), A(T::Flying));       se(A(T::Rock), A(T::Bug));        se(A(T::Rock), A(T::Fire));
-    se(A(T::Rock), A(T::Ice));          nve(A(T::Rock), A(T::Fighting));  nve(A(T::Rock), A(T::Ground));
-    se(A(T::Bug), A(T::Poison));        se(A(T::Bug), A(T::Grass));       se(A(T::Bug), A(T::Psychic)); // Gen 1: Bug SE vs Poison
-    nve(A(T::Bug), A(T::Fighting));     nve(A(T::Bug), A(T::Flying));     nve(A(T::Bug), A(T::Ghost));
-    nve(A(T::Bug), A(T::Fire));
-    se(A(T::Ghost), A(T::Ghost));       imm(A(T::Ghost), A(T::Normal));   imm(A(T::Ghost), A(T::Psychic)); // Gen 1 bug
-    se(A(T::Fire), A(T::Bug));          se(A(T::Fire), A(T::Grass));      se(A(T::Fire), A(T::Ice));
-    nve(A(T::Fire), A(T::Rock));        nve(A(T::Fire), A(T::Fire));      nve(A(T::Fire), A(T::Water));
-    nve(A(T::Fire), A(T::Dragon));
-    se(A(T::Water), A(T::Ground));      se(A(T::Water), A(T::Rock));      se(A(T::Water), A(T::Fire));
-    nve(A(T::Water), A(T::Water));      nve(A(T::Water), A(T::Grass));    nve(A(T::Water), A(T::Dragon));
-    se(A(T::Grass), A(T::Ground));      se(A(T::Grass), A(T::Rock));      se(A(T::Grass), A(T::Water));
-    nve(A(T::Grass), A(T::Flying));     nve(A(T::Grass), A(T::Poison));   nve(A(T::Grass), A(T::Bug));
-    nve(A(T::Grass), A(T::Fire));       nve(A(T::Grass), A(T::Grass));    nve(A(T::Grass), A(T::Dragon));
-    se(A(T::Electric), A(T::Flying));   se(A(T::Electric), A(T::Water));  nve(A(T::Electric), A(T::Grass));
-    nve(A(T::Electric), A(T::Electric)); nve(A(T::Electric), A(T::Dragon)); imm(A(T::Electric), A(T::Ground));
-    se(A(T::Psychic), A(T::Fighting));  se(A(T::Psychic), A(T::Poison));  nve(A(T::Psychic), A(T::Psychic));
-    se(A(T::Ice), A(T::Flying));        se(A(T::Ice), A(T::Ground));      se(A(T::Ice), A(T::Grass));
-    se(A(T::Ice), A(T::Dragon));        nve(A(T::Ice), A(T::Water));      nve(A(T::Ice), A(T::Ice));
-    se(A(T::Dragon), A(T::Dragon));
-    chart_ready = true;
-}
-}  // namespace
-
 double type_effectiveness(Type attacking, Type defending) {
     if (attacking == Type::None || defending == Type::None) return 1.0;
-    if (!chart_ready) build_chart();
-    return CHART[static_cast<int>(attacking)][static_cast<int>(defending)] / 100.0;
+    return GEN1_TYPE_CHART[static_cast<int>(attacking)][static_cast<int>(defending)] / 100.0;
+}
+
+const Species& species(const std::string& name) {
+    static const std::unordered_map<std::string, Species> table = [] {
+        std::unordered_map<std::string, Species> m;
+        for (const auto& e : GEN1_SPECIES) {
+            Species s;
+            s.name = e.name;
+            s.t1 = e.t1;
+            s.t2 = e.t2;
+            s.hp = e.hp; s.atk = e.atk; s.def = e.def; s.spc = e.spc; s.spe = e.spe;
+            m.emplace(e.name, s);
+        }
+        return m;
+    }();
+    auto it = table.find(name);
+    if (it == table.end()) throw std::out_of_range("unknown species: " + name);
+    return it->second;
 }
 
 int gen1_damage(int level, int power, int attack, int defense, bool stab, double type_mult,
@@ -115,6 +85,7 @@ int effective_speed(const Pokemon& p) {
     return p.status == Status::Paralysis ? p.spe / 4 : p.spe;
 }
 
+// Gen 1: a move is physical/special purely by its type (no per-move split).
 bool gen1_is_physical(Type t) {
     switch (t) {
         case Type::Normal: case Type::Fighting: case Type::Flying: case Type::Poison:
@@ -131,7 +102,6 @@ double combined_effectiveness(Type atk, const Species* def) {
     return e;
 }
 
-// Can this Pokémon act this turn? Mutates sleep counter / thaws as a side effect.
 bool can_act(Pokemon& p, RNG& rng) {
     switch (p.status) {
         case Status::Freeze:
@@ -163,9 +133,9 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
             user.reflect = true;
             return;
         case Effect::SelfDestruct:
-            return;  // damage + user faint handled by use_move
+            return;
         default:
-            break;  // status-inflicting effects below
+            break;
     }
     if (tgt.fainted() || tgt.status != Status::None) return;
     if (mv->power == 0 && mv->fixed == 0 && combined_effectiveness(mv->type, tgt.species) == 0.0)
@@ -201,8 +171,8 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
         bool physical = gen1_is_physical(mv->type);
         int atk = physical ? a.atk : a.spc;
         int def = physical ? d.def : d.spc;
-        if (physical && d.reflect) def *= 2;                                  // Reflect
-        if (mv->effect == Effect::SelfDestruct) def = std::max(1, def / 2);   // Explosion halves Def
+        if (physical && d.reflect) def *= 2;                                   // Reflect
+        if (mv->effect == Effect::SelfDestruct) def = std::max(1, def / 2);    // Explosion halves Def
         if (physical && a.status == Status::Burn) atk = std::max(1, atk / 2);  // burn halves Attack
         d.hp -= gen1_damage(a.level, mv->power, atk, def, stab, mult, crit, rng.range(217, 255));
     }
@@ -256,7 +226,6 @@ std::vector<Choice> Battle::choices(int player) const {
 }
 
 Result Battle::step(const Choice& c1, const Choice& c2) {
-    // Forced-switch (replacement) step: only switches resolve, no turn advances.
     if (p1.must_switch || p2.must_switch) {
         if (p1.must_switch && c1.kind == ChoiceKind::Switch) do_switch(p1, c1.index);
         if (p2.must_switch && c2.kind == ChoiceKind::Switch) do_switch(p2, c2.index);
@@ -267,11 +236,9 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
 
     ++turn;
 
-    // 1) Switches resolve before any move.
     if (c1.kind == ChoiceKind::Switch) do_switch(p1, c1.index);
     if (c2.kind == ChoiceKind::Switch) do_switch(p2, c2.index);
 
-    // 2) Moves, in Speed order (ties broken randomly).
     bool m1 = c1.kind == ChoiceKind::Move;
     bool m2 = c2.kind == ChoiceKind::Move;
     int s1 = effective_speed(p1.mon()), s2 = effective_speed(p2.mon());
@@ -281,11 +248,9 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
     auto act2 = [&]() { if (m2) try_move(p2, p1, c2.index, rng); };
     if (p1_first) { act1(); act2(); } else { act2(); act1(); }
 
-    // 3) End-of-turn residual damage.
     residual(p1.mon());
     residual(p2.mon());
 
-    // 4) Flag forced switches for fainted actives that still have a bench.
     p1.must_switch = p1.mon().fainted() && p1.has_alive_bench();
     p2.must_switch = p2.mon().fainted() && p2.has_alive_bench();
 

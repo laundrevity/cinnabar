@@ -66,6 +66,9 @@ struct Pokemon {
 
 Pokemon make_pokemon(const Species* s, std::vector<const MoveData*> moves, int level = 100);
 
+// Look up a Gen 1 species by name from the generated data (gen1_data.hpp).
+const Species& species(const std::string& name);
+
 struct RNG {
     uint64_t state;
     explicit RNG(uint64_t seed) : state(seed ? seed : 0x9E3779B97F4A7C15ull) {}
