@@ -147,3 +147,28 @@ def final_material(battle) -> tuple[float, float]:
     p1 = sum(e[1] for e in battle.team_state(0))
     p2 = sum(e[1] for e in battle.team_state(1))
     return p1, p2
+
+
+def parse_team(text: str) -> Team:
+    """Parse a Showdown export-format team into the engine's [(species, [moves]), ...].
+    Strips gender/item/ability lines; keeps up to 4 moves per mon."""
+    team: Team = []
+    for block in text.strip().split("\n\n"):
+        lines = [ln.rstrip() for ln in block.splitlines() if ln.strip()]
+        if not lines:
+            continue
+        species = lines[0].split(" @ ")[0].split(" (")[0].strip()
+        moves = [ln[2:].strip() for ln in lines if ln.startswith("- ")]
+        if species and moves:
+            team.append((species, moves[:4]))
+    return team
+
+
+def load_teams(teams_dir) -> list[Team]:
+    """Load every *.txt Showdown team in a directory into engine TeamSpecs."""
+    teams = []
+    for p in sorted(Path(teams_dir).glob("*.txt")):
+        t = parse_team(p.read_text())
+        if t:
+            teams.append(t)
+    return teams

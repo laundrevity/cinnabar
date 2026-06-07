@@ -25,14 +25,15 @@ from pathlib import Path
 import torch
 
 from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM, TEAM_SIZE, featurize
-from cinnabar.engine_cpp import StaticData, build_state, final_material  # inserts engine/build on sys.path
+from cinnabar.engine_cpp import StaticData, build_state, final_material, load_teams  # inserts engine/build on sys.path
 import cinnabar_engine as ce  # noqa: E402
 from cinnabar.policy import MaxDamagePolicy, RandomPolicy  # noqa: E402
 from cinnabar.rl.agent import StepRecord  # noqa: E402
 from cinnabar.rl.net import ActionScorer  # noqa: E402
 from cinnabar.rl.returns import discounted_returns, standardize  # noqa: E402
 
-TEAMS = [
+# Fallback teams (only fully-modeled moves); --teams-dir loads the teams/ pool in main().
+_FALLBACK_TEAMS = [
     [("Tauros", ["Body Slam", "Earthquake", "Blizzard", "Hyper Beam"]),
      ("Snorlax", ["Body Slam", "Earthquake", "Hyper Beam", "Rest"]),
      ("Exeggutor", ["Psychic", "Sleep Powder", "Explosion", "Body Slam"]),
@@ -46,6 +47,7 @@ TEAMS = [
      ("Snorlax", ["Body Slam", "Earthquake", "Hyper Beam", "Rest"]),
      ("Jynx", ["Blizzard", "Psychic", "Body Slam", "Seismic Toss"])],
 ]
+TEAMS = _FALLBACK_TEAMS  # set from --teams-dir in main() if any teams load
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,6 +70,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--opponent", choices=["random", "maxdamage", "self", "league"], default="self")
     p.add_argument("--snapshot-every", type=int, default=10,
                    help="self: refresh the opponent every N iters; league: add a snapshot every N iters")
+    p.add_argument("--anchor-frac", type=float, default=0.5,
+                   help="self/league: fraction of iterations played vs max-damage (anchors against drift)")
+    p.add_argument("--teams-dir", default=str(Path(__file__).resolve().parent.parent / "teams"),
+                   help="dir of Showdown team .txt files (a random one per side per battle)")
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-battles", type=int, default=200)
     p.add_argument("--ckpt-every", type=int, default=25)
@@ -274,8 +280,12 @@ def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     random.seed(args.seed)
-    global _STATIC
+    global _STATIC, TEAMS
     _STATIC = StaticData(1)  # poke-env static data used by build_state
+    loaded = load_teams(args.teams_dir)
+    if loaded:
+        TEAMS = loaded
+    print(f"teams: {len(TEAMS)} ({'from ' + args.teams_dir if loaded else 'fallback'})")
 
     net = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
     if args.init:
@@ -295,6 +305,7 @@ def main() -> None:
         fixed_opp = RandomPolicy()
 
     rng_eval, md_eval = RandomPolicy(), MaxDamagePolicy()
+    anchor = MaxDamagePolicy()  # self/league: anchor a fraction of iters against this baseline
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     print(f"Engine PPO (vectorized): {args.iters} iters x {args.batch} battles vs {args.opponent} "
@@ -303,7 +314,12 @@ def main() -> None:
     best_md = -1.0
     for it in range(1, args.iters + 1):
         t0 = time.time()
-        opp = random.choice(pool) if pool is not None else fixed_opp  # league: a random past self
+        if args.opponent in ("self", "league") and random.random() < args.anchor_frac:
+            opp = anchor  # anchor this iter vs max-damage so self-play can't drift off the benchmark
+        elif pool is not None:
+            opp = random.choice(pool)  # league: a random past self
+        else:
+            opp = fixed_opp
         steps, returns, wins, ties, total = rollout(net, opp, args, it)
         info = (ppo_update(net, optimizer, steps, returns, epochs=args.epochs,
                            minibatch_size=args.minibatch_size, clip=args.clip,
