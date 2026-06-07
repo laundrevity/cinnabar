@@ -149,6 +149,26 @@ int main() {
         }
     }
 
+    // move() table + make_battle from team specs (the API the Python bindings use).
+    {
+        CHECK_EQ(move("Body Slam").power, 85);
+        CHECK_EQ(move("Seismic Toss").fixed, 100);
+        TeamSpec spec = {
+            {"Tauros", {"Body Slam", "Earthquake", "Blizzard", "Hyper Beam"}},
+            {"Snorlax", {"Body Slam", "Earthquake", "Explosion", "Rest"}},
+            {"Chansey", {"Ice Beam", "Thunderbolt", "Thunder Wave", "Soft-Boiled"}},
+        };
+        RNG pick(99);
+        auto choose = [&](const std::vector<Choice>& cs) {
+            return cs.empty() ? pass_choice() : cs[pick.range(0, (int)cs.size() - 1)];
+        };
+        Battle b = make_battle(spec, spec, 123);
+        Result r = Result::Ongoing;
+        for (int t = 0; t < 5000 && r == Result::Ongoing; ++t)
+            r = b.step(choose(b.choices(0)), choose(b.choices(1)));
+        CHECK(r != Result::Ongoing);
+    }
+
     if (failures == 0) std::printf("ALL ENGINE TESTS PASSED\n");
     else std::printf("%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;

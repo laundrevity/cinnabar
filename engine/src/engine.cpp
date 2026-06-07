@@ -31,6 +31,33 @@ const Species& species(const std::string& name) {
     return it->second;
 }
 
+const MoveData& move(const std::string& name) {
+    static const std::unordered_map<std::string, MoveData> table = [] {
+        std::unordered_map<std::string, MoveData> m;
+        auto add = [&](MoveData md) { m.emplace(md.name, md); };
+        // Hand-coded for now (the moves our teams use); a codegen pass will source
+        // these from Showdown like gen1_data.hpp does for species.
+        add({"Psychic", Type::Psychic, Category::Special, 90, 100});
+        add({"Thunder Wave", Type::Electric, Category::Status, 0, 100, 0, Effect::Paralyze, 100});
+        add({"Recover", Type::Normal, Category::Status, 0, 100, 0, Effect::Heal, 100});
+        add({"Soft-Boiled", Type::Normal, Category::Status, 0, 100, 0, Effect::Heal, 100});
+        add({"Seismic Toss", Type::Fighting, Category::Status, 0, 100, 100});
+        add({"Ice Beam", Type::Ice, Category::Special, 95, 100, 0, Effect::Freeze, 10});
+        add({"Thunderbolt", Type::Electric, Category::Special, 95, 100, 0, Effect::Paralyze, 10});
+        add({"Sleep Powder", Type::Grass, Category::Status, 0, 75, 0, Effect::Sleep, 100});
+        add({"Explosion", Type::Normal, Category::Physical, 170, 100, 0, Effect::SelfDestruct, 0});
+        add({"Body Slam", Type::Normal, Category::Physical, 85, 100, 0, Effect::Paralyze, 30});
+        add({"Earthquake", Type::Ground, Category::Physical, 100, 100});
+        add({"Blizzard", Type::Ice, Category::Special, 120, 90, 0, Effect::Freeze, 10});
+        add({"Hyper Beam", Type::Normal, Category::Physical, 150, 90});
+        add({"Rest", Type::Psychic, Category::Status, 0, 100, 0, Effect::Rest, 100});
+        return m;
+    }();
+    auto it = table.find(name);
+    if (it == table.end()) throw std::out_of_range("unknown move: " + name);
+    return it->second;
+}
+
 int gen1_damage(int level, int power, int attack, int defense, bool stab, double type_mult,
                 bool crit, int random) {
     if (power <= 0 || type_mult == 0.0) return 0;
@@ -255,6 +282,19 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
     p2.must_switch = p2.mon().fainted() && p2.has_alive_bench();
 
     return result();
+}
+
+Battle make_battle(const TeamSpec& team1, const TeamSpec& team2, uint64_t seed) {
+    auto build = [](const TeamSpec& spec) {
+        Side s;
+        for (const auto& entry : spec) {
+            std::vector<const MoveData*> moves;
+            for (const auto& mn : entry.second) moves.push_back(&move(mn));
+            s.team.push_back(make_pokemon(&species(entry.first), std::move(moves)));
+        }
+        return s;
+    };
+    return Battle(build(team1), build(team2), seed);
 }
 
 }  // namespace cinnabar

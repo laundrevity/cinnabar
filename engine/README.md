@@ -28,6 +28,22 @@ ctest --test-dir build --output-on-failure     # run the unit tests
 Known simplifications to refine via differential testing: the 1/256 miss, exact crit rate,
 freeze thaw, PP/Struggle, stat stages, Hyper Beam recharge, and a Showdown-bit-compatible RNG.
 
+## Python bindings (pybind11)
+
+pybind11 is fetched automatically at configure time (needs network + git). Point CMake at
+the agent's interpreter so the module is importable from that env:
+
+```sh
+cd engine
+cmake -S . -B build -DPython3_EXECUTABLE=$(cd ../agent && uv run python -c 'import sys; print(sys.executable)')
+cmake --build build          # builds cinnabar_engine.<...>.so into build/
+cd ../agent && uv run python ../engine/bindings/smoke.py   # random battles in C++, battles/sec
+```
+
+The module exposes `make_battle(team1, team2, seed)` and `Battle.choices / step / result`.
+Next on top of it: a `cinnabar/engine_cpp.py` adapter yielding the agent's `BattleState`
+(so the RL core runs on this backend), and the differential-test harness vs Showdown.
+
 ## Fidelity strategy (what keeps it honest)
 
 1. **Differential testing against Showdown** is the source of truth: identical battle + RNG
@@ -57,4 +73,6 @@ engine/
   src/engine.cpp                    # mechanics; type chart + species from gen1_data.hpp
   tests/test_engine.cpp             # unit tests (hand-computed expectations)
   tools/gen_data.py                 # regenerate gen1_data.hpp from Showdown (poke-env)
+  bindings/bind.cpp                 # pybind11 module (import cinnabar_engine)
+  bindings/smoke.py                 # Python-drives-C++ smoke test + throughput
 ```

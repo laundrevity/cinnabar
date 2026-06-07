@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cinnabar {
@@ -69,6 +70,9 @@ Pokemon make_pokemon(const Species* s, std::vector<const MoveData*> moves, int l
 // Look up a Gen 1 species by name from the generated data (gen1_data.hpp).
 const Species& species(const std::string& name);
 
+// Look up a move by name from the engine's move table (hand-coded for now).
+const MoveData& move(const std::string& name);
+
 struct RNG {
     uint64_t state;
     explicit RNG(uint64_t seed) : state(seed ? seed : 0x9E3779B97F4A7C15ull) {}
@@ -108,5 +112,9 @@ struct Battle {
     Result step(const Choice& c1, const Choice& c2);
     Result result() const;
 };
+
+// Build a battle from team specs: each entry is (species name, [move names]).
+using TeamSpec = std::vector<std::pair<std::string, std::vector<std::string>>>;
+Battle make_battle(const TeamSpec& team1, const TeamSpec& team2, uint64_t seed);
 
 }  // namespace cinnabar
