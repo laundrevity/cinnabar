@@ -38,6 +38,19 @@ class ActionScorer(nn.Module):
         x = torch.cat([g, action_feats], dim=1)
         return self.policy_mlp(x).squeeze(-1)
 
+    def score_actions_batch(self, global_feats: torch.Tensor, action_feats: torch.Tensor,
+                            mask: torch.Tensor) -> torch.Tensor:
+        """Batched scorer for the PPO update.
+
+        global_feats: (B, G), action_feats: (B, K, A), mask: (B, K) bool
+        -> logits: (B, K), with -inf at padded (masked) action slots.
+        """
+        b, k, _ = action_feats.shape
+        g = global_feats.unsqueeze(1).expand(b, k, -1)
+        x = torch.cat([g, action_feats], dim=2)
+        logits = self.policy_mlp(x).squeeze(-1)
+        return logits.masked_fill(~mask, float("-inf"))
+
     def value(self, global_feats: torch.Tensor) -> torch.Tensor:
-        """global_feats: (G,) -> scalar state-value estimate."""
+        """global_feats: (G,) -> scalar value, or (B, G) -> (B,) batched."""
         return self.value_mlp(global_feats).squeeze(-1)

@@ -1,16 +1,18 @@
 """Engine-backed training: PPO on the fast in-process C++ engine (no Showdown server).
 
 Same algorithm as train.py (per-action scorer, clipped PPO, sparse/shaped/dense reward),
-but battles run synchronously via engine_cpp — so it trains at engine speed, not network
-speed. The learner is p1 and records its trajectory; the opponent is p2 (random / maxdamage
-/ a frozen self snapshot).
+but fully vectorized for throughput:
+
+  * rollouts run all `batch` battles concurrently — every battle's action is chosen in ONE
+    batched forward per turn (learner and self-opponent), not one battle/step at a time;
+  * the PPO update runs each minibatch as one padded/masked forward+backward.
 
     cd agent
     uv run python train_engine.py --smoke        # tiny run, checks the loop
     uv run python train_engine.py                  # real run
 
-v1 caveats: full-information observations, and a fixed pool of teams using only the moves
-the engine fully models (see TEAMS).
+v1 caveats: full-information observations, and a fixed pool of teams using only moves the
+engine fully models (see TEAMS).
 """
 
 from __future__ import annotations
@@ -22,15 +24,14 @@ from pathlib import Path
 
 import torch
 
-from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM, TEAM_SIZE
-from cinnabar.engine_cpp import StaticData, final_material, play_battle  # inserts engine/build on sys.path
+from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM, TEAM_SIZE, featurize
+from cinnabar.engine_cpp import StaticData, build_state, final_material  # inserts engine/build on sys.path
 import cinnabar_engine as ce  # noqa: E402
 from cinnabar.policy import MaxDamagePolicy, RandomPolicy  # noqa: E402
-from cinnabar.rl.agent import PGPolicy  # noqa: E402
+from cinnabar.rl.agent import StepRecord  # noqa: E402
 from cinnabar.rl.net import ActionScorer  # noqa: E402
 from cinnabar.rl.returns import discounted_returns, standardize  # noqa: E402
 
-# Engine-clean teams (only fully-modeled moves). A battle draws two at random.
 TEAMS = [
     [("Tauros", ["Body Slam", "Earthquake", "Blizzard", "Hyper Beam"]),
      ("Snorlax", ["Body Slam", "Earthquake", "Hyper Beam", "Rest"]),
@@ -48,16 +49,16 @@ TEAMS = [
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train the RL agent on the C++ engine (PPO).")
+    p = argparse.ArgumentParser(description="Train the RL agent on the C++ engine (vectorized PPO).")
     p.add_argument("--iters", type=int, default=100)
-    p.add_argument("--batch", type=int, default=64, help="battles per update")
+    p.add_argument("--batch", type=int, default=256, help="concurrent battles per update")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--hidden", type=int, default=64)
     p.add_argument("--ent-coef", type=float, default=0.01)
     p.add_argument("--value-coef", type=float, default=0.5)
     p.add_argument("--epochs", type=int, default=4)
-    p.add_argument("--minibatch-size", type=int, default=512)
+    p.add_argument("--minibatch-size", type=int, default=2048)
     p.add_argument("--clip", type=float, default=0.2)
     p.add_argument("--tie-reward", type=float, default=-1.0)
     p.add_argument("--step-penalty", type=float, default=0.0)
@@ -67,55 +68,121 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--opponent", choices=["random", "maxdamage", "self"], default="self")
     p.add_argument("--snapshot-every", type=int, default=10)
     p.add_argument("--eval-every", type=int, default=10)
-    p.add_argument("--eval-battles", type=int, default=100)
+    p.add_argument("--eval-battles", type=int, default=200)
     p.add_argument("--ckpt-every", type=int, default=25)
     p.add_argument("--out", default="models_engine")
     p.add_argument("--init", default=None)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
-    p.add_argument("--turn-limit", type=int, default=1000)
+    p.add_argument("--turn-limit", type=int, default=500)
     p.add_argument("--smoke", action="store_true")
     args = p.parse_args()
     if args.smoke:
-        args.iters, args.batch, args.eval_every, args.eval_battles, args.ckpt_every = 2, 8, 1, 8, 2
+        args.iters, args.batch, args.eval_every, args.eval_battles, args.ckpt_every = 2, 16, 1, 16, 2
     return args
+
+
+# ----- batched featurization / action selection --------------------------------------------
+
+def _pad(states, device):
+    """Featurize a list of states into padded tensors. Returns (glob, act, mask, feats)."""
+    feats = [featurize(s) for s in states]
+    b = len(feats)
+    g_dim = len(feats[0][0])
+    a_dim = len(feats[0][1][0])
+    k = max(len(af) for _, af in feats)
+    glob = torch.zeros(b, g_dim)
+    act = torch.zeros(b, k, a_dim)
+    mask = torch.zeros(b, k, dtype=torch.bool)
+    for i, (g, af) in enumerate(feats):
+        glob[i] = torch.tensor(g, dtype=torch.float32)
+        n = len(af)
+        act[i, :n] = torch.tensor(af, dtype=torch.float32)
+        mask[i, :n] = True
+    return glob.to(device), act.to(device), mask.to(device), feats
+
+
+def select_batch(net, states, device, *, sample, record_buf=None, tags=None) -> list[int]:
+    """Choose an action for every state in one forward. Returns chosen indices (into each
+    state's available_actions). If record_buf is given, append a StepRecord per state."""
+    glob, act, mask, feats = _pad(states, device)
+    with torch.no_grad():
+        logits = net.score_actions_batch(glob, act, mask)
+        logp_all = torch.log_softmax(logits, dim=1)
+        chosen = (torch.multinomial(logp_all.exp(), 1).squeeze(1) if sample
+                  else logits.argmax(dim=1))
+        chosen_l = chosen.tolist()
+        if record_buf is not None:
+            beh = logp_all.gather(1, chosen.unsqueeze(1)).squeeze(1).tolist()
+            vals = net.value(glob).tolist()
+    if record_buf is not None:
+        for i, s in enumerate(states):
+            our = sum(m.hp_fraction for m in s.team)
+            opp = sum(m.hp_fraction for m in s.opponent_team)  # full info (v1)
+            record_buf.setdefault(tags[i], []).append(
+                StepRecord(feats[i][0], feats[i][1], chosen_l[i], beh[i], vals[i], our, opp))
+    return chosen_l
+
+
+def _select_opp(opp, states, device) -> list[int]:
+    if isinstance(opp, ActionScorer):
+        return select_batch(opp, states, device, sample=True)
+    return [opp.select_action(s).index for s in states]  # RandomPolicy / MaxDamagePolicy
+
+
+# ----- PPO update (batched) -----------------------------------------------------------------
+
+def _tensorize(steps, returns, device):
+    n = len(steps)
+    g_dim = len(steps[0].global_feats)
+    a_dim = len(steps[0].action_feats[0])
+    k = max(len(s.action_feats) for s in steps)
+    glob = torch.zeros(n, g_dim)
+    act = torch.zeros(n, k, a_dim)
+    mask = torch.zeros(n, k, dtype=torch.bool)
+    for i, s in enumerate(steps):
+        glob[i] = torch.tensor(s.global_feats)
+        m = len(s.action_feats)
+        act[i, :m] = torch.tensor(s.action_feats)
+        mask[i, :m] = True
+    chosen = torch.tensor([s.chosen for s in steps], dtype=torch.long)
+    beh = torch.tensor([s.behavior_logp for s in steps], dtype=torch.float32)
+    ret = torch.tensor(returns, dtype=torch.float32)
+    return (glob.to(device), act.to(device), mask.to(device),
+            chosen.to(device), beh.to(device), ret.to(device))
 
 
 def ppo_update(net, optimizer, steps, returns, *, epochs, minibatch_size, clip,
                value_coef, ent_coef, device) -> dict:
-    values_old = [s.value for s in steps]
-    advantages = standardize([r - v for r, v in zip(returns, values_old)])
-    order = list(range(len(steps)))
+    glob, act, mask, chosen, beh, ret = _tensorize(steps, returns, device)
+    adv = torch.tensor(standardize([r - s.value for r, s in zip(returns, steps)]),
+                       dtype=torch.float32, device=device)
+    n = len(steps)
     info = {"loss": float("nan")}
     for _ in range(epochs):
-        random.shuffle(order)
-        for start in range(0, len(order), minibatch_size):
-            mb = order[start:start + minibatch_size]
+        perm = torch.randperm(n, device=device)
+        for start in range(0, n, minibatch_size):
+            idx = perm[start:start + minibatch_size]
             optimizer.zero_grad()
-            policy_loss = torch.zeros((), device=device)
-            value_loss = torch.zeros((), device=device)
-            entropy = torch.zeros((), device=device)
-            for i in mb:
-                rec = steps[i]
-                g = torch.tensor(rec.global_feats, dtype=torch.float32, device=device)
-                a = torch.tensor(rec.action_feats, dtype=torch.float32, device=device)
-                dist = torch.distributions.Categorical(logits=net.score_actions(g, a))
-                logp = dist.log_prob(torch.tensor(rec.chosen, device=device))
-                value = net.value(g)
-                ratio = torch.exp(logp - rec.behavior_logp)
-                adv = advantages[i]
-                clipped = torch.clamp(ratio, 1.0 - clip, 1.0 + clip) * adv
-                policy_loss = policy_loss - torch.min(ratio * adv, clipped)
-                value_loss = value_loss + (value - returns[i]) ** 2
-                entropy = entropy + dist.entropy()
-            m = max(len(mb), 1)
-            loss = (policy_loss + value_coef * value_loss - ent_coef * entropy) / m
+            logits = net.score_actions_batch(glob[idx], act[idx], mask[idx])
+            logp_all = torch.log_softmax(logits, dim=1)
+            logp = logp_all.gather(1, chosen[idx].unsqueeze(1)).squeeze(1)
+            entropy = -(logp_all.exp() * logp_all.masked_fill(~mask[idx], 0.0)).sum(dim=1)
+            value = net.value(glob[idx])
+            ratio = torch.exp(logp - beh[idx])
+            a = adv[idx]
+            policy_loss = -torch.min(ratio * a, torch.clamp(ratio, 1 - clip, 1 + clip) * a).mean()
+            value_loss = ((value - ret[idx]) ** 2).mean()
+            ent = entropy.mean()
+            loss = policy_loss + value_coef * value_loss - ent_coef * ent
             loss.backward()
             optimizer.step()
-            info = {"loss": loss.item(), "policy_loss": policy_loss.item() / m,
-                    "value_loss": value_loss.item() / m, "entropy": entropy.item() / m}
+            info = {"loss": loss.item(), "policy_loss": policy_loss.item(),
+                    "value_loss": value_loss.item(), "entropy": ent.item()}
     return info
 
+
+# ----- rewards / rollout / eval -------------------------------------------------------------
 
 def build_rewards(recs, battle, args) -> list[float]:
     res = battle.result()
@@ -138,40 +205,58 @@ def build_rewards(recs, battle, args) -> list[float]:
     return rewards
 
 
-def rollout(learner, opp, static, args, base) -> tuple[list, list, int, int, int]:
-    learner.train()
-    learner.reset_buffer()
-    battles = []
-    for i in range(args.batch):
+def _make_battles(n, base):
+    items = []
+    for i in range(n):
         t1, t2 = random.choice(TEAMS), random.choice(TEAMS)
-        tag = f"{base}_{i}"
-        battles.append((tag, play_battle(learner, opp, t1, t2, static,
-                                         seed=base * 100003 + i, tag=tag, turn_limit=args.turn_limit)))
+        s1 = [(s, list(m)) for s, m in t1]
+        s2 = [(s, list(m)) for s, m in t2]
+        items.append({"b": ce.make_battle(s1, s2, base + i), "s1": s1, "s2": s2, "tag": f"{base}_{i}"})
+    return items
+
+
+_STATIC: StaticData | None = None  # set in main(); the poke-env static-data cache for build_state
+
+
+def _run(items, net, opp, args, *, record_buf, greedy_learner=False):
+    """Step all battles to completion, choosing actions in batched forwards each turn."""
+    for _ in range(args.turn_limit):
+        live = [it for it in items if it["b"].result() == ce.Result.Ongoing]
+        if not live:
+            break
+        st1 = [build_state(it["b"], 0, it["s1"], _STATIC, it["tag"]) for it in live]
+        st2 = [build_state(it["b"], 1, it["s2"], _STATIC, it["tag"]) for it in live]
+        a1 = select_batch(net, st1, args.device, sample=not greedy_learner,
+                          record_buf=record_buf, tags=[it["tag"] for it in live] if record_buf is not None else None)
+        a2 = _select_opp(opp, st2, args.device)
+        for j, it in enumerate(live):
+            it["b"].step(it["b"].choices(0)[a1[j]], it["b"].choices(1)[a2[j]])
+
+
+def rollout(net, opp, args, base):
+    items = _make_battles(args.batch, base * 100003)
+    buf: dict = {}
+    _run(items, net, opp, args, record_buf=buf)
     steps, returns, wins, ties, total = [], [], 0, 0, 0
-    for tag, battle in battles:
-        recs = learner.steps_by_battle.get(tag)
+    for it in items:
+        recs = buf.get(it["tag"])
         if not recs:
             continue
         total += 1
-        res = battle.result()
+        res = it["b"].result()
         if res == ce.Result.P1Win:
             wins += 1
         elif res != ce.Result.P2Win:
             ties += 1
-        returns.extend(discounted_returns(build_rewards(recs, battle, args), args.gamma))
+        returns.extend(discounted_returns(build_rewards(recs, it["b"], args), args.gamma))
         steps.extend(recs)
     return steps, returns, wins, ties, total
 
 
-def eval_winrate(learner, opp, static, n, base) -> float:
-    learner.eval()
-    wins = 0
-    for i in range(n):
-        t1, t2 = random.choice(TEAMS), random.choice(TEAMS)
-        b = play_battle(learner, opp, t1, t2, static, seed=base * 7919 + i, tag=f"ev{i}")
-        if b.result() == ce.Result.P1Win:
-            wins += 1
-    learner.train()
+def eval_winrate(net, opp, args, n, base) -> float:
+    items = _make_battles(n, base * 7919)
+    _run(items, net, opp, args, record_buf=None, greedy_learner=True)
+    wins = sum(1 for it in items if it["b"].result() == ce.Result.P1Win)
     return 100.0 * wins / max(n, 1)
 
 
@@ -179,19 +264,18 @@ def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     random.seed(args.seed)
-    static = StaticData(1)
+    global _STATIC
+    _STATIC = StaticData(1)  # poke-env static data used by build_state
 
     net = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
     if args.init:
         net.load_state_dict(torch.load(args.init, map_location=args.device))
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
-    learner = PGPolicy(net, device=args.device)
 
     if args.opponent == "self":
-        opp_net = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
-        opp_net.load_state_dict(net.state_dict())
-        opp = PGPolicy(opp_net, device=args.device)
-        opp.record = False  # samples for diversity, never trains
+        opp = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
+        opp.load_state_dict(net.state_dict())
+        opp_net = opp
     elif args.opponent == "maxdamage":
         opp, opp_net = MaxDamagePolicy(), None
     else:
@@ -200,31 +284,31 @@ def main() -> None:
     rng_eval, md_eval = RandomPolicy(), MaxDamagePolicy()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    print(f"Engine PPO: {args.iters} iters x {args.batch} battles vs {args.opponent} "
+    print(f"Engine PPO (vectorized): {args.iters} iters x {args.batch} battles vs {args.opponent} "
           f"[{args.reward} reward]. -> {out}/")
 
     best_md = -1.0
     for it in range(1, args.iters + 1):
         t0 = time.time()
-        steps, returns, wins, ties, total = rollout(learner, opp, static, args, it)
+        steps, returns, wins, ties, total = rollout(net, opp, args, it)
         info = (ppo_update(net, optimizer, steps, returns, epochs=args.epochs,
                            minibatch_size=args.minibatch_size, clip=args.clip,
                            value_coef=args.value_coef, ent_coef=args.ent_coef, device=args.device)
                 if steps else {"loss": float("nan")})
         bps = args.batch / max(time.time() - t0, 1e-9)
         print(f"iter {it:4d} | win {100.0 * wins / max(total, 1):5.1f}% | ties {ties:2d} | "
-              f"loss {info['loss']:+.3f} | steps {len(steps):5d} | {bps:5.1f} battles/s")
+              f"loss {info['loss']:+.3f} | steps {len(steps):6d} | {bps:6.0f} battles/s")
 
         if it % args.eval_every == 0:
-            wr_rng = eval_winrate(learner, rng_eval, static, args.eval_battles, it)
-            wr_md = eval_winrate(learner, md_eval, static, args.eval_battles, it + 1)
+            wr_rng = eval_winrate(net, rng_eval, args, args.eval_battles, it)
+            wr_md = eval_winrate(net, md_eval, args, args.eval_battles, it + 1)
             print(f"         eval (greedy) | vs random {wr_rng:5.1f}% | vs maxdmg {wr_md:5.1f}%")
             if wr_md > best_md:
                 best_md = wr_md
                 torch.save(net.state_dict(), out / "pg_best.pt")
 
         if opp_net is not None and it % args.snapshot_every == 0:
-            opp_net.load_state_dict(net.state_dict())  # opponent catches up
+            opp_net.load_state_dict(net.state_dict())
         if it % args.ckpt_every == 0 or it == args.iters:
             torch.save(net.state_dict(), out / f"pg_iter{it}.pt")
 
