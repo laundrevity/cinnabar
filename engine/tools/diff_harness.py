@@ -128,10 +128,11 @@ def summary(name, turns, p1w, ties, fin):
 
 async def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 200
-    print(f"Running {n} random mirror battles in each engine (Showdown needs the local server up)...\n")
+    print(f"Running {n} random mirror battles in the C++ engine...", flush=True)
     e = run_engine(n)
-    s = await run_showdown(n)
     summary("C++ engine", *e)
+    print(f"\nRunning {n} in Showdown (needs the local server on :8000)...", flush=True)
+    s = await run_showdown(n)
     summary("Showdown", *s)
     em, sm = statistics.mean(e[0]), statistics.mean(s[0])
     print(f"\nmean battle length: engine {em:.1f} vs Showdown {sm:.1f} ({100 * (em - sm) / sm:+.0f}% vs oracle)")
