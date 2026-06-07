@@ -27,7 +27,8 @@ enum class Category { Physical, Special, Status };
 enum class Result { Ongoing, P1Win, P2Win, Tie };
 
 // Primary or secondary move effect.
-enum class Effect { None, Paralyze, Sleep, Freeze, Burn, Poison, Heal, Rest, Reflect, SelfDestruct };
+enum class Effect { None, Paralyze, Sleep, Freeze, Burn, Poison, Heal, Rest, Reflect, SelfDestruct,
+                    Substitute };
 
 double type_effectiveness(Type attacking, Type defending);  // Gen 1 (provisional)
 
@@ -72,6 +73,8 @@ struct Pokemon {
     int sleep_turns = 0;
     bool reflect = false;        // volatile: Reflect screen, cleared on switch out
     bool must_recharge = false;  // volatile: owes a Hyper Beam recharge turn; cleared on switch
+    bool has_substitute = false; // volatile: a Substitute is up, absorbing damage; cleared on switch
+    int sub_hp = 0;              // remaining Substitute HP (floor(maxhp/4)+1 when created)
     std::vector<const MoveData*> moves;
     std::vector<int> pp;  // current PP per move slot (parallel to moves); -1 = untracked/unlimited
 

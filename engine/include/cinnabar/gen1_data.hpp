@@ -346,7 +346,7 @@ inline const MoveEntry GEN1_MOVES[] = {
     {"Tri Attack", Type::Normal, Category::Special, 80, 100, 0, Effect::None, 0, -1, 0, false, 0, false, 10, false},
     {"Super Fang", Type::Normal, Category::Physical, 1, 90, 0, Effect::None, 0, -1, 0, false, 0, false, 10, false},
     {"Slash", Type::Normal, Category::Physical, 70, 100, 0, Effect::None, 0, -1, 0, false, 0, true, 20, false},
-    {"Substitute", Type::Normal, Category::Status, 0, 0, 0, Effect::None, 0, -1, 0, false, 0, false, 10, false},
+    {"Substitute", Type::Normal, Category::Status, 0, 0, 0, Effect::Substitute, 100, -1, 0, false, 0, false, 10, false},
     {"Struggle", Type::Normal, Category::Physical, 50, 100, 0, Effect::None, 0, -1, 0, false, 0, false, 10, false},
 };
 

@@ -123,6 +123,8 @@ def translate_move(mid: str, m: dict) -> tuple:
         effect, effect_chance = "Effect::Heal", 100  # 50% heal (poke-env omits Recover's heal field)
     elif mid == "reflect":
         effect, effect_chance = "Effect::Reflect", 100
+    elif mid == "substitute":
+        effect, effect_chance = "Effect::Substitute", 100
     elif m.get("status") in STATUS_EFFECT:
         effect, effect_chance = STATUS_EFFECT[m["status"]], 100
     elif m.get("boosts"):
@@ -238,7 +240,8 @@ def main() -> None:
     # Show how a few key moves translated, for eyeballing fidelity.
     print("\n=== Sample translations ===")
     for mid in ("bodyslam", "psychic", "amnesia", "swordsdance", "slash", "thunderwave",
-                "recover", "seismictoss", "explosion", "growl", "blizzard", "icebeam", "hyperbeam"):
+                "recover", "seismictoss", "explosion", "growl", "blizzard", "icebeam", "hyperbeam",
+                "substitute"):
         if mid in moves:
             print(f"  {mid:12s} -> {translate_move(mid, moves[mid])}")
 

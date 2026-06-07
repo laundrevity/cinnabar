@@ -232,6 +232,18 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
             return;
         case Effect::SelfDestruct:
             return;
+        case Effect::Substitute:
+            // Gen 1: fails if a sub is already up or HP < maxhp/4. Otherwise pay floor(maxhp/4)
+            // and create a sub with floor(maxhp/4)+1 HP. (maxhp<=3 makes no sub — Showdown quirk.)
+            if (user.has_substitute) return;
+            if (user.hp * 4 < user.max_hp) return;
+            if (user.max_hp > 3) {
+                int cost = user.max_hp / 4;
+                user.hp -= cost;
+                if (user.hp > 0) { user.has_substitute = true; user.sub_hp = cost + 1; }
+                else user.hp = 0;
+            }
+            return;
         default:
             break;
     }
@@ -240,6 +252,13 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
     if (tgt.fainted()) return;  // KO'd by the damage -> no status roll (Showdown guards target.hp>0)
 
     const bool secondary = mv->effect_chance < 100;  // <100 == a damaging move's secondary
+    // Substitute (Gen 1): while the target's sub is up, a damaging move's secondary status is
+    // skipped entirely (no RNG roll); a primary status move is blocked only for poison —
+    // paralysis / sleep / freeze / burn pass through the substitute.
+    if (tgt.has_substitute) {
+        if (secondary) return;
+        if (mv->effect == Effect::Poison) return;
+    }
     const bool par_brn_frz = mv->effect == Effect::Paralyze || mv->effect == Effect::Burn ||
                              mv->effect == Effect::Freeze;
 
@@ -278,6 +297,7 @@ void apply_boosts(const MoveData* mv, Pokemon& user, Pokemon& foe, RNG& rng) {
     Pokemon& tgt = mv->boost_target_foe ? foe : user;
     if (mv->boost_target_foe) {
         if (tgt.fainted()) return;  // secondary needs a surviving target
+        if (tgt.has_substitute) return;  // Gen 1: a sub blocks foe stat-drops (no roll spent)
         if (mv->boost_chance > 0 && mv->boost_chance < 100) {  // a damaging move's % secondary
             int num = (mv->boost_chance * 256 + 99) / 100;     // ceil(chance * 256 / 100)
             if (!rng.chance(num, 256)) return;
@@ -312,7 +332,7 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
     // every non-self-targeting move, *including* 100%-accuracy ones (the 1/256 miss). Moves
     // that target the user (Recover/Rest/Reflect) skip the roll.
     bool self_targeting = mv->effect == Effect::Heal || mv->effect == Effect::Rest ||
-                          mv->effect == Effect::Reflect ||
+                          mv->effect == Effect::Reflect || mv->effect == Effect::Substitute ||
                           (mv->boost_stat >= 0 && !mv->boost_target_foe);  // Amnesia/SD/Agility
     if (!self_targeting && mv->accuracy > 0) {
         int acc = std::clamp(mv->accuracy * 255 / 100, 1, 255);
@@ -324,8 +344,13 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
 
     if (mv->fixed > 0) {
         if (combined_effectiveness(mv->type, d.species) == 0.0) return;
-        d.hp -= mv->fixed;
-        if (d.hp < 0) d.hp = 0;
+        if (d.has_substitute) {  // fixed damage hits the sub (no overflow to real HP)
+            d.sub_hp -= mv->fixed > d.sub_hp ? d.sub_hp : mv->fixed;
+            if (d.sub_hp <= 0) { d.has_substitute = false; d.sub_hp = 0; }
+        } else {
+            d.hp -= mv->fixed;
+            if (d.hp < 0) d.hp = 0;
+        }
     } else if (mv->power > 0 && !d.fainted()) {
         double mult = combined_effectiveness(mv->type, d.species);
         if (mult == 0.0) {  // immune: no damage, no secondary
@@ -363,9 +388,15 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
                      a.species->name.c_str(), d.species->name.c_str(), atk, def,
                      static_cast<int>(stab), mult, static_cast<int>(crit), roll, dmg);
 #endif
-        int actual = dmg < d.hp ? dmg : d.hp;  // Showdown caps damage at the target's remaining HP
-        d.hp -= actual;
-        dealt = actual;
+        if (d.has_substitute) {  // Gen 1: damage hits the sub; excess is NOT dealt to real HP
+            d.sub_hp -= dmg > d.sub_hp ? d.sub_hp : dmg;
+            if (d.sub_hp <= 0) { d.has_substitute = false; d.sub_hp = 0; }
+            dealt = dmg;  // uncapped (for recoil/drain bookkeeping; not yet modelled)
+        } else {
+            int actual = dmg < d.hp ? dmg : d.hp;  // Showdown caps damage at the target's HP
+            d.hp -= actual;
+            dealt = actual;
+        }
     }
 
     if (mv->effect == Effect::SelfDestruct) a.hp = 0;
@@ -399,6 +430,7 @@ void do_switch(Side& s, int idx) {
     s.active = idx;
     Pokemon& in = s.mon();
     in.must_recharge = false;  // volatiles clear on switch (a recharge can't carry to a new mon)
+    in.has_substitute = false; in.sub_hp = 0;  // a Substitute does not persist across a switch
     // Gen 1: stat stages reset on switch — recompute modified stats from the stored stats...
     in.boost_atk = in.boost_def = in.boost_spc = in.boost_spe = 0;
     in.m_atk = in.atk; in.m_def = in.def; in.m_spc = in.spc; in.m_spe = in.spe;
