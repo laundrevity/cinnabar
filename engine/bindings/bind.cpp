@@ -88,6 +88,19 @@ PYBIND11_MODULE(cinnabar_engine, m) {
         }, py::arg("player"))
         .def("must_switch", [](const Battle& b, int player) {
             return (player == 0 ? b.p1 : b.p2).must_switch;
+        }, py::arg("player"))
+        // Active-mon volatile state for the RL observation: stat stages, the Hyper Beam
+        // recharge flag (a free turn the opponent owes), and remaining forced-sleep turns.
+        .def("active_boosts", [](const Battle& b, int player) {
+            const Pokemon& m = (player == 0 ? b.p1 : b.p2).mon();
+            return py::make_tuple(m.boost_atk, m.boost_def, m.boost_spc, m.boost_spe);
+        }, py::arg("player"))
+        .def("active_must_recharge", [](const Battle& b, int player) {
+            return (player == 0 ? b.p1 : b.p2).mon().must_recharge;
+        }, py::arg("player"))
+        .def("active_sleep_turns", [](const Battle& b, int player) {
+            const Pokemon& m = (player == 0 ? b.p1 : b.p2).mon();
+            return m.status == Status::Sleep ? m.sleep_turns : 0;
         }, py::arg("player"));
 
     // team1/team2 are list[tuple[str species, list[str] moves]].

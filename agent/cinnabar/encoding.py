@@ -23,7 +23,8 @@ _STATUS_INDEX = {name: i for i, name in enumerate(STATUS_ORDER)}
 TEAM_SIZE = 6
 
 # global = hps(2) + two status one-hots + force_switch + turn + team aggregates(4) + speed(1)
-GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1
+#          + active volatiles(12): own+opp boosts(8) + own+opp recharge(2) + own+opp sleep(2)
+GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12
 # action = move features(7) + switch-target features(3) + fixed-damage(1) + effect features(11):
 #   status one-hot(5) + chance(1) + heals/boosts_self/lowers_foe/recharge/self_destruct(5)
 ACTION_DIM = 7 + 3 + 1 + 11
@@ -70,6 +71,17 @@ def encode_global(state: BattleState) -> list[float]:
     opp_fainted = sum(1 for m in state.opponent_team if m.fainted) / TEAM_SIZE
     opp_revealed = len(state.opponent_team) / TEAM_SIZE
 
+    # Active-mon volatiles: stat stages (setup/drops), recharge (a free turn the foe owes),
+    # and remaining sleep turns. Appended after the originals so existing indices are stable.
+    def _boosts(mon) -> list[float]:
+        b = mon.boosts if (mon and mon.boosts) else (0, 0, 0, 0)
+        return [x / 6.0 for x in b]  # stages are -6..+6
+
+    our_recharge = 1.0 if (state.active and state.active.must_recharge) else 0.0
+    opp_recharge = 1.0 if (state.opponent_active and state.opponent_active.must_recharge) else 0.0
+    our_sleep = (state.active.sleep_turns / 7.0) if state.active else 0.0
+    opp_sleep = (state.opponent_active.sleep_turns / 7.0) if state.opponent_active else 0.0
+
     return [
         our_hp,
         opp_hp,
@@ -82,6 +94,12 @@ def encode_global(state: BattleState) -> list[float]:
         opp_fainted,
         opp_revealed,
         _speed_advantage(state.active, state.opponent_active),
+        *_boosts(state.active),
+        *_boosts(state.opponent_active),
+        our_recharge,
+        opp_recharge,
+        our_sleep,
+        opp_sleep,
     ]
 
 

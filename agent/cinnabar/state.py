@@ -69,6 +69,9 @@ class ActivePokemon:
     status: Optional[str] = None
     types: tuple[str, ...] = ()  # e.g. ("WATER", "PSYCHIC")
     speed: Optional[int] = None  # base Speed stat (turn order; Gen 1 OU runs maxed stats)
+    boosts: tuple[int, ...] = (0, 0, 0, 0)  # stat stages atk/def/spc/spe (-6..+6)
+    must_recharge: bool = False             # owes a Hyper Beam recharge turn (a free turn for the foe)
+    sleep_turns: int = 0                    # remaining forced-sleep turns (0 if awake)
 
 
 @dataclass

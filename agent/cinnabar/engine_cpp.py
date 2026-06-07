@@ -103,12 +103,15 @@ def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str
     ts = battle.team_state(player)        # [(species, hp_frac, status, fainted, active), ...]
     ots = battle.team_state(1 - player)
 
-    def active_view(entries) -> ActivePokemon | None:
+    def active_view(entries, p: int) -> ActivePokemon | None:
         e = next((x for x in entries if x[4]), None)
         if e is None:
             return None
         return ActivePokemon(species=e[0], hp_fraction=e[1], status=(e[2] or None),
-                             types=static.species_types(e[0]), speed=static.species_speed(e[0]))
+                             types=static.species_types(e[0]), speed=static.species_speed(e[0]),
+                             boosts=tuple(battle.active_boosts(p)),
+                             must_recharge=battle.active_must_recharge(p),
+                             sleep_turns=battle.active_sleep_turns(p))
 
     opp_entry = next((x for x in ots if x[4]), None)
     opp_types = static.species_types(opp_entry[0]) if opp_entry else ()
@@ -144,7 +147,7 @@ def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str
         return TeamMon(species=e[0], hp_fraction=e[1], fainted=e[3], status=(e[2] or None), active=e[4])
 
     return BattleState(
-        turn=battle.turn, active=active_view(ts), opponent_active=active_view(ots),
+        turn=battle.turn, active=active_view(ts, player), opponent_active=active_view(ots, 1 - player),
         available_actions=actions, force_switch=battle.must_switch(player), battle_tag=tag,
         team=[team_mon(e) for e in ts], opponent_team=[team_mon(e) for e in ots],  # full info (v1)
     )
