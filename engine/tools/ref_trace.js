@@ -22,13 +22,18 @@ function packTeam(text) {
     for (const set of team) set.ability = "No Ability";
     return Teams.pack(team);
 }
-// Matchup configurable via env so we can diff arbitrary species/move pairs.
-const P1S = process.env.CINNABAR_P1_SPECIES || "Tauros";
+// Matchup configurable via env. CINNABAR_P{1,2}_TEAM is a comma-separated species list (each
+// gets CINNABAR_P{1,2}_MOVE); falls back to the single-species 1v1 vars.
+function buildTeam(speciesList, moveName) {
+    const text = speciesList.map((s) => `${s.trim()}\n${EVS}\n- ${moveName}\n`).join("\n");
+    return packTeam(text);
+}
+const P1_TEAM = (process.env.CINNABAR_P1_TEAM || process.env.CINNABAR_P1_SPECIES || "Tauros").split(",");
+const P2_TEAM = (process.env.CINNABAR_P2_TEAM || process.env.CINNABAR_P2_SPECIES || "Snorlax").split(",");
 const P1M = process.env.CINNABAR_P1_MOVE || "Earthquake";
-const P2S = process.env.CINNABAR_P2_SPECIES || "Snorlax";
 const P2M = process.env.CINNABAR_P2_MOVE || "Earthquake";
-const P1 = packTeam(`${P1S}\n${EVS}\n- ${P1M}\n`);
-const P2 = packTeam(`${P2S}\n${EVS}\n- ${P2M}\n`);
+const P1 = buildTeam(P1_TEAM, P1M);
+const P2 = buildTeam(P2_TEAM, P2M);
 
 const code = (s) => s || "none"; // '' -> none; else slp/par/brn/frz/psn
 
@@ -58,18 +63,38 @@ function runBattle(seedWords, debug) {
             p1: { name: "p1", team: P1 }, p2: { name: "p2", team: P2 },
         });
     }
+    // Normalize a fainted active to 'fnt' (Showdown's label for a 0-HP mon varies — 'fnt' when
+    // it will be replaced, '' when it's the last mon and the battle ends). HP=0 is the real signal.
+    const stat = (p) => (p.hp <= 0 ? "fnt" : code(p.status));
     const snap = () => {
         const a = battle.sides[0].active[0];
         const b = battle.sides[1].active[0];
         return {
-            p1_hp: a.hp, p1_maxhp: a.maxhp, p1_status: code(a.status),
-            p2_hp: b.hp, p2_maxhp: b.maxhp, p2_status: code(b.status),
+            p1_sp: a.set.species, p1_hp: a.hp, p1_maxhp: a.maxhp, p1_status: stat(a),
+            p2_sp: b.set.species, p2_hp: b.hp, p2_maxhp: b.maxhp, p2_status: stat(b),
         };
+    };
+    // "Attack with move 1; when forced to switch (active fainted), send in the lowest-index
+    // alive teammate." The non-switching side passes ("") during a switch request.
+    const firstSwitch = (side) => {
+        for (let i = 0; i < side.pokemon.length; i++) {
+            if (!side.pokemon[i].fainted && side.pokemon[i] !== side.active[0]) return i + 1;
+        }
+        return 0;
+    };
+    const chooseFor = (side) => {
+        const req = side.activeRequest;
+        if (!req || req.wait) return "";
+        if (req.forceSwitch && req.forceSwitch[0]) {
+            const t = firstSwitch(side);
+            return t ? `switch ${t}` : "pass";
+        }
+        return "move 1";
     };
     const trace = [];
     let guard = 0;
     while (!battle.ended && guard++ < 2000) {
-        battle.makeChoices("move 1", "move 1");
+        battle.makeChoices(chooseFor(battle.sides[0]), chooseFor(battle.sides[1]));
         trace.push(snap());
     }
     if (debug) {

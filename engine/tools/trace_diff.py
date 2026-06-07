@@ -19,26 +19,44 @@ sys.path.insert(0, str(HERE.parent / "build"))
 import cinnabar_engine as ce  # noqa: E402
 
 # Matchup configurable via env (mirrors ref_trace.js, which inherits this environment).
-P1 = [(os.environ.get("CINNABAR_P1_SPECIES", "Tauros"), [os.environ.get("CINNABAR_P1_MOVE", "Earthquake")])]
-P2 = [(os.environ.get("CINNABAR_P2_SPECIES", "Snorlax"), [os.environ.get("CINNABAR_P2_MOVE", "Earthquake")])]
+# CINNABAR_P{1,2}_TEAM = comma-separated species (each gets CINNABAR_P{1,2}_MOVE).
+def _team(team_env, sp_env, move_env):
+    species = (os.environ.get(team_env) or os.environ.get(sp_env) or "Tauros").split(",")
+    move = os.environ.get(move_env, "Earthquake")
+    return [(s.strip(), [move]) for s in species]
 
 
-def move0(b, player):
-    for c in b.choices(player):
+P1 = _team("CINNABAR_P1_TEAM", "CINNABAR_P1_SPECIES", "CINNABAR_P1_MOVE")
+P2 = _team("CINNABAR_P2_TEAM", "CINNABAR_P2_SPECIES", "CINNABAR_P2_MOVE")
+
+
+def choose(b, player):
+    """Attack with move 0; on a forced switch (only switches offered), send the lowest-index
+    alive teammate. (Mirrors ref_trace.js's chooseFor.)"""
+    cs = b.choices(player)
+    if cs and all(c.kind == ce.ChoiceKind.Switch for c in cs):
+        return min(cs, key=lambda c: c.index)
+    for c in cs:
         if c.kind == ce.ChoiceKind.Move and c.index == 0:
             return c
-    return b.choices(player)[0]
+    for c in cs:
+        if c.kind == ce.ChoiceKind.Move:  # Struggle (-1) or any available move
+            return c
+    return cs[0]
 
 
 def our_trace(seed_u64):
     b = ce.make_battle(P1, P2, seed_u64)
+    # Showdown marks a fainted Pokémon's status as 'fnt'; mirror that in the snapshot.
+    def st(pl):
+        return "fnt" if b.active_hp(pl) <= 0 else b.active_status(pl)
     tr, guard = [], 0
     while b.result() == ce.Result.Ongoing and guard < 2000:
         guard += 1
-        b.step(move0(b, 0), move0(b, 1))
+        b.step(choose(b, 0), choose(b, 1))
         tr.append({
-            "p1_hp": b.active_hp(0), "p1_maxhp": b.active_max_hp(0), "p1_status": b.active_status(0),
-            "p2_hp": b.active_hp(1), "p2_maxhp": b.active_max_hp(1), "p2_status": b.active_status(1),
+            "p1_sp": b.active_species(0), "p1_hp": b.active_hp(0), "p1_maxhp": b.active_max_hp(0), "p1_status": st(0),
+            "p2_sp": b.active_species(1), "p2_hp": b.active_hp(1), "p2_maxhp": b.active_max_hp(1), "p2_status": st(1),
         })
     winner = {ce.Result.P1Win: "p1", ce.Result.P2Win: "p2"}.get(b.result())
     return {"winner": winner, "trace": tr}
