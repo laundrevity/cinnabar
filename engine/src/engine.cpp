@@ -62,17 +62,29 @@ const MoveData& move(const std::string& name) {
     return it->second;
 }
 
-int gen1_damage(int level, int power, int attack, int defense, bool stab, double type_mult,
-                bool crit, int random) {
-    if (power <= 0 || type_mult == 0.0) return 0;
+int gen1_damage(int level, int power, int attack, int defense, bool stab,
+                Type move_type, Type def_t1, Type def_t2, bool crit, int random) {
+    if (power <= 0) return 0;
     int L = crit ? 2 * level : level;
-    long dmg = ((2L * L) / 5 + 2);
+    long dmg = (2L * L) / 5 + 2;
     dmg = dmg * power * attack / std::max(1, defense);
-    dmg = dmg / 50 + 2;
-    if (stab) dmg = dmg * 3 / 2;
-    dmg = static_cast<long>(dmg * type_mult);
-    dmg = dmg * random / 255;
-    if (type_mult > 0.0 && dmg < 1) dmg = 1;
+    dmg = dmg / 50;
+    if (dmg > 997) dmg = 997;  // Showdown clampIntRange(floor(dmg/50), 0, 997)
+    dmg += 2;
+    if (stab) dmg += dmg / 2;  // STAB: damage += floor(damage / 2)
+    // Type effectiveness per defending type, in order, flooring after each (Showdown's
+    // ×20/10 / ×5/10 steps) — the order matters for dual types (e.g. Ice vs Water/Flying).
+    auto apply_type = [&](Type dt) {
+        if (dt == Type::None) return;
+        double e = type_effectiveness(move_type, dt);
+        if (e == 0.0) dmg = 0;            // immune (normally filtered earlier in use_move)
+        else if (e > 1.0) dmg = dmg * 20 / 10;
+        else if (e < 1.0) dmg = dmg * 5 / 10;
+    };
+    apply_type(def_t1);
+    apply_type(def_t2);
+    if (dmg == 0) return 0;
+    if (dmg > 1) dmg = dmg * random / 255;
     return static_cast<int>(dmg);
 }
 
@@ -147,7 +159,7 @@ bool can_act(Pokemon& p, RNG& rng) {
             if (p.sleep_turns <= 0) p.status = Status::None;
             return false;  // Gen 1: a turn is always lost to sleep, including the wake turn
         case Status::Paralysis:
-            return !rng.chance(1, 4);  // 25% fully paralyzed
+            return !rng.chance(63, 256);  // Showdown gen1: 63/256 chance of full paralysis
         default:
             return true;
     }
@@ -155,7 +167,6 @@ bool can_act(Pokemon& p, RNG& rng) {
 
 void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
     if (mv->effect == Effect::None) return;
-    auto roll = [&]() { return mv->effect_chance >= 100 || rng.chance(mv->effect_chance, 100); };
     switch (mv->effect) {
         case Effect::Heal:
             user.hp = std::min(user.max_hp, user.hp + user.max_hp / 2);
@@ -173,10 +184,31 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
         default:
             break;
     }
-    if (tgt.fainted() || tgt.status != Status::None) return;
-    if (mv->power == 0 && mv->fixed == 0 && combined_effectiveness(mv->type, tgt.species) == 0.0)
-        return;  // status move blocked by type immunity (e.g. Thunder Wave vs Ground)
-    if (!roll()) return;
+
+    // Status-inflicting effects on the target.
+    if (tgt.fainted()) return;  // KO'd by the damage -> no status roll (Showdown guards target.hp>0)
+
+    const bool secondary = mv->effect_chance < 100;  // <100 == a damaging move's secondary
+    const bool par_brn_frz = mv->effect == Effect::Paralyze || mv->effect == Effect::Burn ||
+                             mv->effect == Effect::Freeze;
+
+    if (secondary) {
+        // Gen 1: a secondary par/brn/frz never triggers on a target sharing the move's type,
+        // and the RNG is NOT rolled in that case (so draw counts stay aligned with Showdown).
+        if (par_brn_frz && (mv->type == tgt.species->t1 || mv->type == tgt.species->t2)) return;
+        // Showdown rolls randomChance(ceil(chance*256/100), 256). The roll is spent even if the
+        // target is already statused (the set-status just fails afterwards).
+        const int num = (mv->effect_chance * 256 + 99) / 100;  // ceil(chance * 256 / 100)
+        if (!rng.chance(num, 256)) return;
+    } else {
+        // Primary status move (Thunder Wave, Sleep Powder, ...): guaranteed on hit, no roll,
+        // but blocked by type immunity (e.g. Thunder Wave vs a Ground-type).
+        if (mv->power == 0 && mv->fixed == 0 && combined_effectiveness(mv->type, tgt.species) == 0.0)
+            return;
+    }
+
+    if (tgt.status != Status::None) return;  // already statused -> set-status fails (roll spent)
+
     switch (mv->effect) {
         case Effect::Paralyze: tgt.status = Status::Paralysis; break;
         case Effect::Sleep:    tgt.status = Status::Sleep; tgt.sleep_turns = rng.range(1, 7); break;
@@ -232,7 +264,8 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
         }
         if (mv->effect == Effect::SelfDestruct) def = std::max(1, def / 2);  // Explosion halves Def
         int roll = rng.range(217, 255);
-        int dmg = gen1_damage(a.level, mv->power, atk, def, stab, mult, crit, roll);
+        int dmg = gen1_damage(a.level, mv->power, atk, def, stab, mv->type,
+                              d.species->t1, d.species->t2, crit, roll);
 #ifdef CINNABAR_DEBUG
         std::fprintf(stderr, "[hit] %s->%s atk=%d def=%d stab=%d mult=%.2f crit=%d roll=%d dmg=%d\n",
                      a.species->name.c_str(), d.species->name.c_str(), atk, def,

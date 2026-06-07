@@ -9,6 +9,7 @@ Run from agent/:  uv run python ../engine/tools/trace_diff.py [s0 s1 s2 s3]
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -17,8 +18,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "build"))
 import cinnabar_engine as ce  # noqa: E402
 
-P1 = [("Tauros", ["Earthquake"])]
-P2 = [("Snorlax", ["Earthquake"])]
+# Matchup configurable via env (mirrors ref_trace.js, which inherits this environment).
+P1 = [(os.environ.get("CINNABAR_P1_SPECIES", "Tauros"), [os.environ.get("CINNABAR_P1_MOVE", "Earthquake")])]
+P2 = [(os.environ.get("CINNABAR_P2_SPECIES", "Snorlax"), [os.environ.get("CINNABAR_P2_MOVE", "Earthquake")])]
 
 
 def move0(b, player):

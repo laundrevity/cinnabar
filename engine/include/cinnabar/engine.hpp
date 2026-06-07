@@ -31,8 +31,10 @@ enum class Effect { None, Paralyze, Sleep, Freeze, Burn, Poison, Heal, Rest, Ref
 
 double type_effectiveness(Type attacking, Type defending);  // Gen 1 (provisional)
 
-int gen1_damage(int level, int power, int attack, int defense,
-                bool stab, double type_mult, bool crit, int random);
+// Effectiveness is applied per defending type, in order (def_t1 then def_t2), flooring
+// after each step like Showdown (×20/10 super, ×5/10 resisted) — not as one combined factor.
+int gen1_damage(int level, int power, int attack, int defense, bool stab,
+                Type move_type, Type def_t1, Type def_t2, bool crit, int random);
 
 struct Species {
     std::string name;

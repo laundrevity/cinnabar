@@ -22,8 +22,13 @@ function packTeam(text) {
     for (const set of team) set.ability = "No Ability";
     return Teams.pack(team);
 }
-const P1 = packTeam(`Tauros\n${EVS}\n- Earthquake\n`);
-const P2 = packTeam(`Snorlax\n${EVS}\n- Earthquake\n`);
+// Matchup configurable via env so we can diff arbitrary species/move pairs.
+const P1S = process.env.CINNABAR_P1_SPECIES || "Tauros";
+const P1M = process.env.CINNABAR_P1_MOVE || "Earthquake";
+const P2S = process.env.CINNABAR_P2_SPECIES || "Snorlax";
+const P2M = process.env.CINNABAR_P2_MOVE || "Earthquake";
+const P1 = packTeam(`${P1S}\n${EVS}\n- ${P1M}\n`);
+const P2 = packTeam(`${P2S}\n${EVS}\n- ${P2M}\n`);
 
 const code = (s) => s || "none"; // '' -> none; else slp/par/brn/frz/psn
 

@@ -54,9 +54,13 @@ int main() {
     CHECK_EQ(t.atk, 298);
     CHECK_EQ(t.spe, 318);
     CHECK_EQ(make_pokemon(&species("Snorlax"), {}).max_hp, 523);
-    CHECK_EQ(gen1_damage(100, 100, 298, 298, false, 1.0, false, 255), 86);
-    CHECK_EQ(gen1_damage(100, 100, 298, 298, false, 1.0, true, 255), 166);
-    CHECK_EQ(gen1_damage(100, 100, 298, 298, true, 2.0, false, 255), 258);
+    CHECK_EQ(gen1_damage(100, 100, 298, 298, false, Type::Normal, Type::Normal, Type::None, false, 255), 86);
+    CHECK_EQ(gen1_damage(100, 100, 298, 298, false, Type::Normal, Type::Normal, Type::None, true, 255), 166);
+    CHECK_EQ(gen1_damage(100, 100, 298, 298, true, Type::Water, Type::Ground, Type::None, false, 255), 258);
+    // Dual-type effectiveness is order-sensitive: Ice vs Water/Flying (resist then super)
+    // floors to 160, but Flying/Water (super then resist) gives 161 — a combined ×1.0 misses this.
+    CHECK_EQ(gen1_damage(100, 95, 200, 100, false, Type::Ice, Type::Water, Type::Flying, false, 255), 160);
+    CHECK_EQ(gen1_damage(100, 95, 200, 100, false, Type::Ice, Type::Flying, Type::Water, false, 255), 161);
     CHECK(type_effectiveness(Type::Ghost, Type::Psychic) == 0.0);   // Gen 1 bug
     CHECK(type_effectiveness(Type::Bug, Type::Poison) == 2.0);      // Gen 1 quirk
     CHECK(type_effectiveness(Type::Electric, Type::Ground) == 0.0);
