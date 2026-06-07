@@ -104,7 +104,7 @@ def run_engine(n):
 
 
 async def run_showdown(n):
-    common = dict(battle_format="gen1ou", team=TEAM_STR, max_concurrent_battles=10, log_level=40)
+    common = dict(battle_format="gen1ou", team=TEAM_STR, max_concurrent_battles=25, log_level=40)
     p1, p2 = RandomPlayer(**common), RandomPlayer(**common)
     await p1.battle_against(p2, n_battles=n)
     turns, p1w, ties, fin = [], 0, 0, 0
@@ -127,12 +127,14 @@ def summary(name, turns, p1w, ties, fin):
 
 
 async def main():
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 200
-    print(f"Running {n} random mirror battles in the C++ engine...", flush=True)
-    e = run_engine(n)
+    # engine count (fast) and Showdown count (slow oracle) decoupled.
+    engine_n = int(sys.argv[1]) if len(sys.argv) > 1 else 500
+    sd_n = int(sys.argv[2]) if len(sys.argv) > 2 else 40
+    print(f"Running {engine_n} random mirror battles in the C++ engine...", flush=True)
+    e = run_engine(engine_n)
     summary("C++ engine", *e)
-    print(f"\nRunning {n} in Showdown (needs the local server on :8000)...", flush=True)
-    s = await run_showdown(n)
+    print(f"\nRunning {sd_n} in Showdown (slow: long heal-stall battles over a websocket)...", flush=True)
+    s = await run_showdown(sd_n)
     summary("Showdown", *s)
     em, sm = statistics.mean(e[0]), statistics.mean(s[0])
     print(f"\nmean battle length: engine {em:.1f} vs Showdown {sm:.1f} ({100 * (em - sm) / sm:+.0f}% vs oracle)")
