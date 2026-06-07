@@ -111,6 +111,10 @@ struct Side {
     std::vector<Pokemon> team;  // up to 6
     int active = 0;
     bool must_switch = false;  // active fainted, a replacement is required
+    // For Counter (Gen 1): the last move this side executed and last move it selected. Both are
+    // per-side and persist across switches (Counter can reflect damage from a since-switched mon).
+    const MoveData* last_move = nullptr;
+    const MoveData* last_selected = nullptr;
 
     Pokemon& mon() { return team[active]; }
     const Pokemon& mon() const { return team[active]; }
@@ -131,6 +135,7 @@ struct Battle {
     Side p1, p2;
     RNG rng;
     int turn = 0;
+    int last_damage = 0;  // most recent damage dealt in the battle (what Counter doubles)
 
     Battle(Side a, Side b, uint64_t seed) : p1(std::move(a)), p2(std::move(b)), rng(seed) {}
 

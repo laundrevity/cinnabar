@@ -65,6 +65,15 @@ STATUS_EFFECT = {"par": "Effect::Paralyze", "slp": "Effect::Sleep", "frz": "Effe
 BOOST_IDX = {"atk": 0, "def": 1, "spa": 2, "spd": 2, "spc": 2, "spe": 3, "accuracy": 4, "evasion": 5}
 CAT_ENUM = {"physical": "Category::Physical", "special": "Category::Special", "status": "Category::Status"}
 
+# Moves that do NOT reset the battle's lastDamage (Gen 1 scripts.ts SKIP_LASTDAMAGE): Counter reads
+# it, the rest are status moves. Note e.g. Sleep Powder is NOT here, so it DOES reset lastDamage.
+SKIP_LASTDAMAGE = {
+    "confuseray", "conversion", "counter", "focusenergy", "glare", "haze", "leechseed",
+    "lightscreen", "mimic", "mist", "poisongas", "poisonpowder", "recover", "reflect", "rest",
+    "softboiled", "splash", "stunspore", "substitute", "supersonic", "teleport", "thunderwave",
+    "toxic", "transform",
+}
+
 
 def ours_matrix() -> dict[tuple[str, str], int]:
     m = {(a, d): 100 for a in ORDER for d in ORDER}
@@ -127,6 +136,8 @@ def translate_move(mid: str, m: dict) -> tuple:
         effect, effect_chance = "Effect::Substitute", 100
     elif m.get("volatileStatus") == "confusion":
         effect, effect_chance = "Effect::Confuse", 100  # Confuse Ray
+    elif mid == "counter":
+        effect, effect_chance = "Effect::Counter", 100
     elif m.get("status") in STATUS_EFFECT:
         effect, effect_chance = STATUS_EFFECT[m["status"]], 100
     elif m.get("boosts"):
@@ -159,8 +170,10 @@ def translate_move(mid: str, m: dict) -> tuple:
     # So Thunder Wave (explicit false) respects type immunity; Confuse Ray / Glare ignore it.
     ig = m.get("ignoreImmunity")
     ignore_imm = ("true" if cat == "Category::Status" else "false") if ig is None else ("true" if ig else "false")
-    return (name, typ, cat, power, accuracy, fixed, effect, effect_chance, bstat, bstages,
-            bfoe, bchance, high_crit, pp, recharge, recoil_num, recoil_den, ignore_imm)
+    priority = int(m.get("priority", 0) or 0)            # Counter = -5 (moves last)
+    skip_ld = "true" if mid in SKIP_LASTDAMAGE else "false"  # does not reset battle.last_damage
+    return (name, typ, cat, power, accuracy, fixed, effect, effect_chance, bstat, bstages, bfoe,
+            bchance, high_crit, pp, recharge, recoil_num, recoil_den, ignore_imm, priority, skip_ld)
 
 
 def build_lines(correct, dex, moves) -> tuple[list[str], int, int]:
@@ -202,18 +215,18 @@ def build_lines(correct, dex, moves) -> tuple[list[str], int, int]:
                  "int power, accuracy, fixed; Effect effect; int effect_chance; "
                  "int boost_stat, boost_stages; bool boost_target_foe; int boost_chance; "
                  "bool high_crit; int pp; bool recharge; int recoil_num, recoil_den; "
-                 "bool ignore_immunity; };")
+                 "bool ignore_immunity; int priority; bool skip_lastdamage; };")
     lines.append("inline const MoveEntry GEN1_MOVES[] = {")
     n_moves = 0
     for mid in sorted(moves, key=lambda k: moves[k].get("num", 0)):
         m = moves[mid]
         if type_to_enum(m.get("type", "")) == "Type::None":
             continue
-        (name, typ, cat, power, accuracy, fixed, effect, ec, bstat, bstages,
-         bfoe, bchance, high_crit, pp, recharge, rnum, rden, iimm) = translate_move(mid, m)
+        (name, typ, cat, power, accuracy, fixed, effect, ec, bstat, bstages, bfoe,
+         bchance, high_crit, pp, recharge, rnum, rden, iimm, prio, skip) = translate_move(mid, m)
         lines.append(f'    {{"{name}", {typ}, {cat}, {power}, {accuracy}, {fixed}, '
                      f'{effect}, {ec}, {bstat}, {bstages}, {bfoe}, {bchance}, {high_crit}, {pp}, '
-                     f'{recharge}, {rnum}, {rden}, {iimm}}},')
+                     f'{recharge}, {rnum}, {rden}, {iimm}, {prio}, {skip}}},')
         n_moves += 1
     lines += ["};", "", "}  // namespace cinnabar"]
     return lines, n_species, n_moves
@@ -251,7 +264,7 @@ def main() -> None:
     print("\n=== Sample translations ===")
     for mid in ("bodyslam", "psychic", "amnesia", "swordsdance", "slash", "thunderwave",
                 "recover", "seismictoss", "explosion", "growl", "blizzard", "icebeam", "hyperbeam",
-                "substitute", "doubleedge", "takedown", "confuseray"):
+                "substitute", "doubleedge", "takedown", "confuseray", "counter"):
         if mid in moves:
             print(f"  {mid:12s} -> {translate_move(mid, moves[mid])}")
 

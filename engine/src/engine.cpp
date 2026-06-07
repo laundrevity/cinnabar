@@ -44,7 +44,8 @@ const MoveData& move(const std::string& name) {
             m.emplace(e.name, MoveData{e.name, e.type, e.category, e.power, e.accuracy, e.fixed,
                                        e.effect, e.effect_chance, e.boost_stat, e.boost_stages,
                                        e.boost_target_foe, e.boost_chance, e.high_crit, e.pp,
-                                       e.recharge, e.recoil_num, e.recoil_den, e.ignore_immunity});
+                                       e.recharge, e.recoil_num, e.recoil_den, e.ignore_immunity,
+                                       e.priority, e.skip_lastdamage});
         }
         return m;
     }();
@@ -332,7 +333,7 @@ void apply_boosts(const MoveData* mv, Pokemon& user, Pokemon& foe, RNG& rng) {
 static const MoveData STRUGGLE{.name = "Struggle", .type = Type::Normal, .category = Category::Physical,
                                .power = 50, .accuracy = 100, .recoil_num = 1, .recoil_den = 2};
 
-void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
+void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
     Pokemon& a = as.mon();
     Pokemon& d = ds.mon();
     const bool struggle = (moveidx == -1);
@@ -345,6 +346,8 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
         if (!mv) return;
         if (a.pp[moveidx] > 0) --a.pp[moveidx];  // deduct PP on use (gen1: even if it misses/fails)
     }
+    as.last_move = mv;  // record the move used (Counter reads the opponent's last used move)
+    if (!mv->skip_lastdamage) last_damage = 0;  // damaging non-Counter moves clear it; Counter/status don't
     int recoil_base = 0;     // damage the recoil is computed from (capped; uncapped vs a sub)
     bool recoil_ok = false;  // recoil applies (false vs a sub that broke on this hit)
 
@@ -370,8 +373,32 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
         int acc = std::clamp(mv->accuracy * 255 / 100, 1, 255);
         if (!rng.chance(acc, 256)) {  // miss (includes the gen1 1/256)
             if (mv->effect == Effect::SelfDestruct) a.hp = 0;  // gen1: Explosion faints user on a miss
+            last_damage = 0;  // a miss clears last_damage (Counter can't reflect a missed hit)
             return;
         }
+    }
+
+    if (mv->effect == Effect::Counter) {
+        // Gen 1 Counter: reflect 2x the battle's last damage, but only if BOTH the opponent's last
+        // *used* and last *selected* moves are "counterable" (Normal/Fighting, BP>0, not Counter).
+        // Exactly one counterable -> Showdown's Desync Clause Mod fails it; neither -> fail.
+        auto counterable = [](const MoveData* m) {
+            return m && m->power > 0 && m->effect != Effect::Counter &&
+                   (m->type == Type::Normal || m->type == Type::Fighting);
+        };
+        bool lu = counterable(ds.last_move), ls = counterable(ds.last_selected);
+        if ((lu || ls) && last_damage > 0 && lu == ls) {
+            int dmg = 2 * last_damage;  // typeless, ignores crit; hits the sub like other damage
+            if (d.has_substitute) {
+                d.sub_hp -= dmg > d.sub_hp ? d.sub_hp : dmg;
+                if (d.sub_hp <= 0) { d.has_substitute = false; d.sub_hp = 0; }
+            } else {
+                dmg = dmg < d.hp ? dmg : d.hp;
+                d.hp -= dmg;
+            }
+            last_damage = dmg;
+        }
+        return;
     }
 
     if (mv->fixed > 0) {
@@ -379,9 +406,11 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
         if (d.has_substitute) {  // fixed damage hits the sub (no overflow to real HP)
             d.sub_hp -= mv->fixed > d.sub_hp ? d.sub_hp : mv->fixed;
             if (d.sub_hp <= 0) { d.has_substitute = false; d.sub_hp = 0; }
+            last_damage = mv->fixed;  // uncapped vs a sub
         } else {
-            d.hp -= mv->fixed;
-            if (d.hp < 0) d.hp = 0;
+            int hit = mv->fixed < d.hp ? mv->fixed : d.hp;
+            d.hp -= hit;
+            last_damage = hit;
         }
     } else if (mv->power > 0 && !d.fainted()) {
         double mult = combined_effectiveness(mv->type, d.species);
@@ -431,6 +460,7 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
             recoil_base = actual;
             recoil_ok = true;
         }
+        last_damage = recoil_base;  // what a subsequent Counter would double
     }
 
     if (mv->effect == Effect::SelfDestruct) a.hp = 0;
@@ -447,10 +477,10 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
     if (mv->recharge && !d.fainted()) a.must_recharge = true;
 }
 
-void try_move(Side& as, Side& ds, int moveidx, RNG& rng) {
+void try_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
     if (as.mon().fainted()) return;
-    if (!can_act(as.mon(), rng)) return;
-    use_move(as, ds, moveidx, rng);
+    if (!can_act(as.mon(), rng)) return;  // sleep/freeze/recharge/full-para/confusion self-hit
+    use_move(as, ds, moveidx, rng, last_damage);
 }
 
 void residual(Pokemon& p) {
@@ -527,16 +557,31 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
 
     bool m1 = c1.kind == ChoiceKind::Move;
     bool m2 = c2.kind == ChoiceKind::Move;
-    int s1 = effective_speed(p1.mon()), s2 = effective_speed(p2.mon());
 
-    // Speed ties: Showdown burns extra random(0,2) "speed-tie shuffles" across its scheduler
-    // (it re-shuffles the equal-speed actives in every event pass). To stay bit-aligned we
-    // replicate the steady-state frame — both actives present and acting: 3 shuffles before
-    // the moves (the first decides order), 1 between the moves, 2 after — only the first
-    // changes observable state. (Distinct speeds consume nothing, matching Showdown.)
-    bool tie = (m1 && m2 && s1 == s2);
+    // Record the move each side SELECTED this turn (for Counter's desync clause): a real slot
+    // (index >= 0) or Struggle (-1); recharge (-2) and switches select no move.
+    auto selected = [&](const Side& s, const Choice& c, bool m) -> const MoveData* {
+        if (m && c.index >= 0) return s.mon().moves[c.index];
+        if (m && c.index == -1) return &STRUGGLE;
+        return nullptr;
+    };
+    if (const MoveData* sm = selected(p1, c1, m1)) p1.last_selected = sm;
+    if (const MoveData* sm = selected(p2, c2, m2)) p2.last_selected = sm;
+
+    int s1 = effective_speed(p1.mon()), s2 = effective_speed(p2.mon());
+    // Priority bracket (Counter = -5, moves last). Different brackets resolve deterministically.
+    int pr1 = (m1 && c1.index >= 0) ? p1.mon().moves[c1.index]->priority : 0;
+    int pr2 = (m2 && c2.index >= 0) ? p2.mon().moves[c2.index]->priority : 0;
+
+    // Speed ties: Showdown burns extra random(0,2) "speed-tie shuffles" — but only among actions
+    // in the SAME priority bracket with equal speed. 3 shuffles before the moves (the first
+    // decides order), 1 between, 2 after; only the first changes observable state. Differing
+    // priority (or distinct speed) consumes nothing, matching Showdown.
+    bool tie = (m1 && m2 && pr1 == pr2 && s1 == s2);
     bool p1_first;
-    if (s1 != s2) {
+    if (pr1 != pr2) {
+        p1_first = pr1 > pr2;  // higher priority first
+    } else if (s1 != s2) {
         p1_first = s1 > s2;
     } else if (tie) {
         p1_first = (rng.random(0, 2) == 0);  // move-order shuffle: 0 = no swap = p1 first
@@ -553,8 +598,8 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
     // Burn/poison ticks 1/16 right after the afflicted mon's own move (onAfterMoveSelf),
     // including a turn it's fully paralyzed/asleep (the move action still resolves) — but NOT
     // on a turn its move faints the target (Gen 1: AfterMoveSelf needs target.hp > 0).
-    auto act1 = [&]() { if (m1) { try_move(p1, p2, c1.index, rng); if (!p2.mon().fainted()) residual(p1.mon()); } };
-    auto act2 = [&]() { if (m2) { try_move(p2, p1, c2.index, rng); if (!p1.mon().fainted()) residual(p2.mon()); } };
+    auto act1 = [&]() { if (m1) { try_move(p1, p2, c1.index, rng, last_damage); if (!p2.mon().fainted()) residual(p1.mon()); } };
+    auto act2 = [&]() { if (m2) { try_move(p2, p1, c2.index, rng, last_damage); if (!p1.mon().fainted()) residual(p2.mon()); } };
     // If a side has no Pokémon left after the first move (Self-Destruct, Struggle recoil, or a
     // residual KO), the battle is over: Showdown stops the turn — no second move, no shuffles.
     if (p1_first) {
