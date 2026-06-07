@@ -1,75 +1,69 @@
 # Roadmap
 
-The guiding principle: **prove each layer works before optimizing the one beneath it.**
-Get a learning loop that converges on the real game first; make it fast later, only if you
-must.
+The guiding principle: **prove each layer works before optimizing the one beneath it.** Get a
+learning loop that converges on the real game first; make it fast later.
 
-## Phase 0 — Random bot, playable in the browser
+This is the plan as it actually unfolded — including a deliberate mid-project reversal (see the
+"Decisions" section): the agent was first built against Showdown via `poke-env`, then a custom
+C++ engine was built, validated bit-for-bit against Showdown, and the agent moved onto it.
 
-Goal: wire the whole pipeline together end-to-end with the dumbest possible policy.
+## Phase 0 — Random bot, playable in the browser ✅
 
-- Run a local Showdown server (`scripts/run-server.sh`).
-- Stand up an agent that connects, accepts challenges, and picks a **random legal move**
-  each turn (and a random switch when forced).
-- Play it yourself in the browser to confirm the loop works.
+Wire the whole pipeline together with a random-legal-move policy: a `poke-env` player that
+connects to a local Showdown server, accepts challenges, and plays Gen 1 OU to completion.
+Surfaces every integration problem (protocol, team format, forced switches) while the policy
+is trivial.
 
-Why first: this surfaces every integration problem (server, protocol, team format, move
-legality, forced switches, timeouts) while the policy is trivial. `poke-env` ships a
-`RandomPlayer`, so most of this is connection plumbing rather than logic.
+## Phase 1 — Heuristic baseline ✅
 
-**Done when:** you can challenge the bot to a Gen 1 OU battle and play a game to completion.
+A non-learning yardstick: a type-aware **max-damage** policy (`base_power × type_multiplier ×
+STAB`, with switch fallback), plus an N-game evaluation harness. "Beats random" and "beats
+max-damage" become the first real milestones.
 
-## Phase 1 — Heuristic baseline
+## Phase 2 — Reinforcement learning ✅
 
-Goal: a non-learning opponent that's clearly better than random, to serve as a yardstick.
+Python (Gymnasium-free; PyTorch + `poke-env`). A **per-action scorer**: the net scores each
+legal action from `[global features ++ action features]` and softmaxes, which handles a
+variable action count and makes illegal-action masking automatic. Engine-free `state.py` /
+`encoding.py` / `policy.py` behind an adapter; REINFORCE-with-baseline → **clipped PPO**;
+sparse → shaped → dense reward options. Beats the baselines.
 
-- Implement a **max-damage** policy (pick the move with the highest expected damage given
-  type effectiveness), with simple switch logic.
-- Optionally a slightly smarter rules bot (respect status, avoid switching into bad matchups).
+## Phase 3 — Self-play and scale ✅ (and the engine reversal)
 
-Why: you can't tell if learning is working without a fixed reference point. "Beats random"
-and "beats max-damage" are your first two real milestones.
+Self-play / league play against past snapshots. Then the key decision: rather than chase raw
+throughput inside Showdown, **build a custom Gen 1 engine** (see below) and train on it.
 
-**Done when:** the heuristic reliably beats the random bot, and you have a harness that plays
-N games between any two agents and reports win rate.
+## Engine phases (`engine/`) — the reversal ✅
 
-## Phase 2 — Reinforcement learning
+1. **v0** — damage/stat formulas, type chart, 1v1 loop.
+2. **Full battles** — 6v6, switching, status + moves, healing, Reflect, Explosion.
+3. **Fidelity** — generate static data from Showdown (`gen_data.py`); build the **exact
+   turn-for-turn differential harness** (`trace_diff.py`) and close every divergence: Gen 5
+   LCG + call-sequence, stat rollover, dual-type rounding, status RNG, stat stages, PP/Struggle,
+   switching. Validated bit-for-bit over tens of thousands of battles.
+4. **Python bindings + adapter** — pybind11 module + `agent/cinnabar/engine_cpp.py`, so the
+   engine-free RL core runs on the engine unchanged.
+5. **Scale** — vectorized in-process self-play (batched rollouts + batched PPO update),
+   ~500 battles/sec; the agent trains from random to beating max-damage in minutes.
 
-Goal: an agent that learns to beat the baselines.
+## Where it stands / open threads
 
-- Decide the **agent language** (Python is the default — Gymnasium + PyTorch + `poke-env`'s
-  Gym wrapper).
-- Design the hard parts:
-  - **State representation** — encode active + benched Pokémon, HP, status, boosts, known
-    moves, hazards. Start minimal.
-  - **Action space** — moves + switches, with legal-action masking.
-  - **Reward** — sparse win/loss to start; consider shaping (damage dealt/taken, faints)
-    carefully, since shaping can teach the wrong thing.
-- Train against the random and heuristic baselines first (a stationary opponent is easier to
-  learn against than a moving one).
+The build is done: a faithful, validated engine and an RL agent that trains on it fast.
+What remains is open-ended ML iteration, roughly in value order:
 
-**Done when:** the RL agent beats the heuristic baseline by a clear margin.
+- **Self-play / league curriculum** to push past the max-damage plateau toward strong play.
+- **Breadth**: team variety (parse `teams/`), wider modeled-move coverage (Counter, Substitute,
+  multi-hit, …), reward/hyperparameter tuning.
+- **Throughput**: move `build_state`/featurization into C++ if more speed is wanted.
 
-## Phase 3 — Self-play and scale
+## Decisions
 
-Goal: push past the baselines via self-play, and only now worry about speed.
-
-- Self-play / league play (train against past versions to avoid overfitting one opponent).
-- **Profile before optimizing.** If, and only if, simulation throughput is the proven
-  bottleneck, swap Showdown's sim for [`@pkmn/engine`](https://github.com/pkmn/engine)
-  (Zig, ~1000× faster, built for ML; covers Gen 1/2, which matches our scope).
-- Evaluate against external bots or the ladder if you want a public benchmark.
-
-## Open questions to resolve as you go
-
-- Agent language (Python vs TypeScript) — lock before Phase 2.
-- Team strategy: fixed team(s) for training, with team-building treated as a separate
-  problem layered on later.
-- Algorithm: start simple (DQN / PPO) before anything exotic.
-
-## Decisions already made
-
-- Game engine: **Pokémon Showdown** (submodule), not a custom reimplementation.
-- Format: **Gen 1 OU** (mechanical simplicity).
-- No custom C++ simulator. Speed, if ever needed, comes from parallelism then `@pkmn/engine`.
-  See `CLAUDE.md` for the full reasoning.
+- **Format: Gen 1 OU** — mechanical simplicity.
+- **Custom C++ engine (a reversal of the original "no custom sim").** The project began on
+  Showdown via `poke-env` (the right call for a fast learning loop). The engine was then built
+  as a deliberate engineering project — kept honest by **differential testing against Showdown**
+  (the fidelity oracle), not by reimplementing from memory. Static game data is generated from
+  Showdown, never hand-typed.
+- **poke-env / Showdown kept behind an adapter**, so the decision core is engine-agnostic and
+  the same agent runs on either backend.
+- **Algorithm:** per-action PPO; self-play/league for the curriculum.

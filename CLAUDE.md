@@ -12,6 +12,12 @@ interface. The progression is deliberately incremental:
 - **later** — increasingly strong agents (heuristic baseline → reinforcement learning →
   self-play), each measured against the last.
 
+**Status (current):** all of the above is built. The agent (Phases 0–3) trains via per-action
+PPO with self-play / league curriculum. The custom C++ engine (`engine/`) is **validated
+bit-for-bit against Showdown** for full 6v6 Gen 1 battles, and the RL agent trains on it
+**in-process** at ~500 battles/sec (`agent/train_engine.py`) — random → beats max-damage in
+minutes. Remaining work is open-ended ML iteration (curriculum, breadth, tuning), not building.
+
 ## Scope (current)
 
 - **Format: Gen 1 OU.** Chosen for mechanical simplicity — no abilities, no held items,
@@ -28,20 +34,19 @@ interface. The progression is deliberately incremental:
    Pokémon is mechanics *fidelity*, not speed, and Showdown is the de facto reference. That
    reasoning still holds if the goal is "fastest path to a strong agent." But as a chosen
    **engineering project** (Conor, June 2026 — `@pkmn/engine` being pre-v0.1/unbuildable
-   removed the off-the-shelf fast option), we are building a fast Gen 1 engine in C++. To
-   avoid the fidelity trap it is (a) **scoped** to the moves/species our teams use, expanding
+   removed the off-the-shelf fast option), we **built** a fast Gen 1 engine in C++ (`engine/`).
+   To avoid the fidelity trap it is (a) **scoped** to the moves/species our teams use, expanding
    outward, and (b) **validated by differential testing against Showdown** (identical battle +
-   RNG, diff turn-for-turn). Showdown's role shifts from training backend to **fidelity oracle**.
-   Static game data (type chart, base stats, movedex) should be **generated from Showdown data**,
-   not hand-typed. The poke-env training path (`agent/`) still works and is unaffected.
-2. **Throughput is not the early bottleneck.** The early blockers are state representation,
-   reward shaping, and a training loop that converges. Run many headless Showdown instances
-   in parallel for plenty of games/sec.
-3. **If, and only if, profiling proves throughput is the wall, swap in
-   [`@pkmn/engine`](https://github.com/pkmn/engine)** — a Zig engine purpose-built for ML
-   self-play, ~1000× faster than Showdown's sim. It is pre-v0.1 and currently targets
-   Gen 1/2, which aligns with our Gen 1 scope. This is a phase-3 optimization, not a
-   foundation.
+   RNG, diff turn-for-turn) — now passing **bit-for-bit across full 6v6 battles**, tens of
+   thousands of seeds. Showdown's role shifted from training backend to **fidelity oracle**.
+   Static game data (type chart, base stats, movedex) is **generated from Showdown** (`tools/
+   gen_data.py`), not hand-typed. The poke-env training path (`agent/`) still works.
+2. **Throughput was not the early bottleneck** — state representation, reward shaping, and a
+   converging loop were. Those solved (Phases 0–3 on Showdown), the custom engine then became
+   the throughput path: the RL loop now runs **in-process on the C++ engine** (vectorized
+   rollouts + batched PPO), ~500 battles/sec vs the Showdown-websocket path's ~1–2/sec.
+3. **`@pkmn/engine` was evaluated and abandoned** (pre-v0.1, unbuildable at the time), which is
+   what motivated decision #1. The custom engine is the throughput foundation instead.
 4. **Agent language: Python, managed with [`uv`](https://docs.astral.sh/uv/)** (not pip/venv).
    The ML ecosystem (Gymnasium, PyTorch, stable-baselines3) and
    [`poke-env`](https://poke-env.readthedocs.io/) — the Showdown client + battle-state
@@ -58,13 +63,20 @@ cinnabar/
 ├── CLAUDE.md            # this file
 ├── README.md           # human-facing intro + quickstart
 ├── docs/roadmap.md     # the phased plan in detail
+├── engine/             # custom C++ Gen 1 engine (validated bit-for-bit vs Showdown)
+│   ├── include/cinnabar/engine.hpp + gen1_data.hpp (GENERATED) | src/engine.cpp | tests/
+│   ├── bindings/bind.cpp   # pybind11 module: import cinnabar_engine
+│   └── tools/              # gen_data.py (codegen) | ref_trace.js + trace_diff.py (fidelity harness)
 ├── server/             # Pokémon Showdown lives here
-│   └── pokemon-showdown/   # git submodule (added by scripts/setup.sh)
+│   └── pokemon-showdown/   # git submodule (added by scripts/setup.sh); also the fidelity oracle
 ├── agent/              # Python agent (uv project)
 │   ├── pyproject.toml      # deps (poke-env) + dev group (pytest, ruff)
-│   ├── cinnabar/           # state.py + policy.py (engine-free) | showdown.py (poke-env adapter)
+│   ├── cinnabar/           # state.py + policy.py + encoding.py + rl/ (engine-free core)
+│   │                       #   showdown.py (poke-env adapter) | engine_cpp.py (C++ engine adapter)
 │   ├── play.py             # Phase 0: accept human challenges in Gen 1 OU
-│   ├── smoke_test.py       # bot-vs-bot sanity check
+│   ├── train.py            # PPO training via Showdown (poke-env)
+│   ├── train_engine.py     # PPO training in-process on the C++ engine (vectorized)
+│   ├── smoke_test.py / smoke_engine.py  # bot-vs-bot sanity checks (Showdown / C++ engine)
 │   └── tests/              # pytest for the engine-free core
 ├── teams/              # Gen 1 OU teams in Showdown export format
 └── scripts/
@@ -82,6 +94,15 @@ cinnabar/
 - **Smoke test (bot vs bot):** `cd agent && uv run python smoke_test.py` (server running)
 - **Play the bot (random vs human):** `cd agent && uv run python play.py`
 - **Tests / lint:** `cd agent && uv run pytest` · `uv run ruff check`
+
+### Engine (C++) + engine-backed training
+
+- **Build engine + module:** `cd engine && cmake -S . -B build -DPython_EXECUTABLE=$(cd ../agent && uv run python -c 'import sys; print(sys.executable)') && cmake --build build`
+- **Engine unit tests:** `ctest --test-dir build --output-on-failure`
+- **Regenerate static data from Showdown:** `cd agent && uv run python ../engine/tools/gen_data.py`
+- **Fidelity harness (engine vs Showdown):** `cd agent && uv run python ../engine/tools/trace_diff.py sweep 200` (needs the submodule built; env vars `CINNABAR_P{1,2}_{SPECIES,TEAM,MOVE}`, `CINNABAR_VOL=1`)
+- **Self-play smoke on the engine:** `cd agent && uv run python smoke_engine.py`
+- **Train on the engine:** `cd agent && uv run python train_engine.py --opponent maxdamage --reward shaped` (`--smoke` for a tiny run; `--opponent self` for self-play)
 
 ## Conventions
 
