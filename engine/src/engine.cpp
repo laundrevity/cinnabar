@@ -385,6 +385,14 @@ void residual(Pokemon& p) {
 void do_switch(Side& s, int idx) {
     s.mon().reflect = false;  // Reflect ends when its user leaves the field
     s.active = idx;
+    Pokemon& in = s.mon();
+    // Gen 1: stat stages reset on switch — recompute modified stats from the stored stats...
+    in.boost_atk = in.boost_def = in.boost_spc = in.boost_spe = 0;
+    in.m_atk = in.atk; in.m_def = in.def; in.m_spc = in.spc; in.m_spe = in.spe;
+    // ...then the paralysis/burn stat drops are re-applied on switch-in (a Gen 1 volatile).
+    if (in.status == Status::Paralysis) modify_stat(in, 3, 0.25);
+    if (in.status == Status::Burn) modify_stat(in, 0, 0.5);
+    residual(in);  // Gen 1: a burned/poisoned mon takes 1/16 on switch-in (onAfterSwitchInSelf)
 }
 }  // namespace
 
@@ -455,11 +463,12 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
                  static_cast<int>(p1_first), static_cast<int>(tie));
 #endif
 
-    auto act1 = [&]() { if (m1) try_move(p1, p2, c1.index, rng); };
-    auto act2 = [&]() { if (m2) try_move(p2, p1, c2.index, rng); };
-    // If a side has no Pokémon left after the first move (e.g. Self-Destruct, or fainting to
-    // Struggle recoil), the battle is over: Showdown stops the turn here — no second move, no
-    // end-of-turn shuffles, no residual.
+    // Burn/poison ticks 1/16 right after the afflicted mon's own move (onAfterMoveSelf),
+    // including a turn it's fully paralyzed/asleep (the move action still resolves).
+    auto act1 = [&]() { if (m1) { try_move(p1, p2, c1.index, rng); residual(p1.mon()); } };
+    auto act2 = [&]() { if (m2) { try_move(p2, p1, c2.index, rng); residual(p2.mon()); } };
+    // If a side has no Pokémon left after the first move (Self-Destruct, Struggle recoil, or a
+    // residual KO), the battle is over: Showdown stops the turn — no second move, no shuffles.
     if (p1_first) {
         act1();
         if (result() == Result::Ongoing) { if (tie) rng.random(0, 2); act2(); }
@@ -467,11 +476,7 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
         act2();
         if (result() == Result::Ongoing) { if (tie) rng.random(0, 2); act1(); }
     }
-    if (result() == Result::Ongoing) {
-        if (tie) { rng.random(0, 2); rng.random(0, 2); }
-        residual(p1.mon());
-        residual(p2.mon());
-    }
+    if (result() == Result::Ongoing && tie) { rng.random(0, 2); rng.random(0, 2); }
 
     p1.must_switch = p1.mon().fainted() && p1.has_alive_bench();
     p2.must_switch = p2.mon().fainted() && p2.has_alive_bench();

@@ -30,12 +30,19 @@ P1 = _team("CINNABAR_P1_TEAM", "CINNABAR_P1_SPECIES", "CINNABAR_P1_MOVE")
 P2 = _team("CINNABAR_P2_TEAM", "CINNABAR_P2_SPECIES", "CINNABAR_P2_MOVE")
 
 
-def choose(b, player):
-    """Attack with move 0; on a forced switch (only switches offered), send the lowest-index
-    alive teammate. (Mirrors ref_trace.js's chooseFor.)"""
+VOL = bool(os.environ.get("CINNABAR_VOL"))  # enable voluntary switches (mirrors ref_trace.js)
+
+
+def choose(b, player, counter):
+    """Forced switch (only switches offered) -> lowest-index alive teammate. Else, with
+    voluntary switching on, switch on the scheduled counter; otherwise attack with move 0."""
     cs = b.choices(player)
     if cs and all(c.kind == ce.ChoiceKind.Switch for c in cs):
         return min(cs, key=lambda c: c.index)
+    if VOL and ((player == 0 and counter % 5 == 1) or (player == 1 and counter % 5 == 3)):
+        switches = [c for c in cs if c.kind == ce.ChoiceKind.Switch]
+        if switches:
+            return min(switches, key=lambda c: c.index)
     for c in cs:
         if c.kind == ce.ChoiceKind.Move and c.index == 0:
             return c
@@ -50,10 +57,11 @@ def our_trace(seed_u64):
     # Showdown marks a fainted Pokémon's status as 'fnt'; mirror that in the snapshot.
     def st(pl):
         return "fnt" if b.active_hp(pl) <= 0 else b.active_status(pl)
-    tr, guard = [], 0
+    tr, guard, counter = [], 0, 0
     while b.result() == ce.Result.Ongoing and guard < 2000:
         guard += 1
-        b.step(choose(b, 0), choose(b, 1))
+        b.step(choose(b, 0, counter), choose(b, 1, counter))
+        counter += 1
         tr.append({
             "p1_sp": b.active_species(0), "p1_hp": b.active_hp(0), "p1_maxhp": b.active_max_hp(0), "p1_status": st(0),
             "p2_sp": b.active_species(1), "p2_hp": b.active_hp(1), "p2_maxhp": b.active_max_hp(1), "p2_status": st(1),

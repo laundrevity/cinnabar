@@ -163,12 +163,12 @@ int main() {
         CHECK(loss_reflect < loss_plain);
     }
 
-    // Residual: poison ticks 1/16 max HP at end of turn.
+    // Residual: poison ticks 1/16 max HP after the afflicted mon's own move (onAfterMoveSelf).
     {
         Battle b(make_team(), make_team(), 7);
         b.p1.mon().status = Status::Poison;
         int max = b.p1.mon().max_hp, before = b.p1.mon().hp;
-        b.step(pass_choice(), pass_choice());
+        b.step(move_choice(0), pass_choice());  // p1 uses a move (no self-damage); poison ticks after it
         CHECK_EQ(before - b.p1.mon().hp, std::max(1, max / 16));
     }
 

@@ -82,19 +82,27 @@ function runBattle(seedWords, debug) {
         }
         return 0;
     };
-    const chooseFor = (side) => {
+    // Voluntary switches (CINNABAR_VOL=1): P1 switches on counter%5==1, P2 on %5==3, to the
+    // lowest-index alive teammate. Keyed on a shared loop counter so both engines stay lockstep.
+    const VOL = !!process.env.CINNABAR_VOL;
+    const chooseFor = (side, si, c) => {
         const req = side.activeRequest;
         if (!req || req.wait) return "";
         if (req.forceSwitch && req.forceSwitch[0]) {
             const t = firstSwitch(side);
             return t ? `switch ${t}` : "pass";
         }
+        if (VOL && ((si === 0 && c % 5 === 1) || (si === 1 && c % 5 === 3))) {
+            const t = firstSwitch(side);
+            if (t) return `switch ${t}`;
+        }
         return "move 1";
     };
     const trace = [];
-    let guard = 0;
+    let guard = 0, counter = 0;
     while (!battle.ended && guard++ < 2000) {
-        battle.makeChoices(chooseFor(battle.sides[0]), chooseFor(battle.sides[1]));
+        battle.makeChoices(chooseFor(battle.sides[0], 0, counter), chooseFor(battle.sides[1], 1, counter));
+        counter++;
         trace.push(snap());
     }
     if (debug) {
