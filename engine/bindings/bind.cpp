@@ -11,6 +11,18 @@
 namespace py = pybind11;
 using namespace cinnabar;
 
+// Uppercase status code for the RL adapter ("" = no status). Gen 1 has no Toxic.
+static std::string status_up(Status s) {
+    switch (s) {
+        case Status::Sleep: return "SLP";
+        case Status::Poison: return "PSN";
+        case Status::Burn: return "BRN";
+        case Status::Freeze: return "FRZ";
+        case Status::Paralysis: return "PAR";
+        default: return "";
+    }
+}
+
 PYBIND11_MODULE(cinnabar_engine, m) {
     m.doc() = "Cinnabar Gen 1 battle engine (C++)";
 
@@ -61,6 +73,21 @@ PYBIND11_MODULE(cinnabar_engine, m) {
                 case Status::Paralysis: return std::string("par");
             }
             return std::string("?");
+        }, py::arg("player"))
+        // Per-mon team view (team order): (species, hp_fraction, status, fainted, active).
+        // Drives the RL adapter's BattleState (team aggregates, switch targets, active views).
+        .def("team_state", [](const Battle& b, int player) {
+            const Side& s = (player == 0) ? b.p1 : b.p2;
+            py::list out;
+            for (int i = 0; i < static_cast<int>(s.team.size()); ++i) {
+                const Pokemon& mon = s.team[i];
+                out.append(py::make_tuple(mon.species->name, mon.hp_fraction(),
+                                          status_up(mon.status), mon.fainted(), i == s.active));
+            }
+            return out;
+        }, py::arg("player"))
+        .def("must_switch", [](const Battle& b, int player) {
+            return (player == 0 ? b.p1 : b.p2).must_switch;
         }, py::arg("player"));
 
     // team1/team2 are list[tuple[str species, list[str] moves]].
