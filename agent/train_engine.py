@@ -72,7 +72,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--snapshot-every", type=int, default=10,
                    help="self: refresh the opponent every N iters; league: add a snapshot every N iters")
     p.add_argument("--anchor-frac", type=float, default=0.5,
-                   help="self/league: fraction of iterations played vs max-damage (anchors against drift)")
+                   help="self/league: fraction of iterations played vs the anchor (guards against drift)")
+    p.add_argument("--anchor", choices=["smart", "maxdamage"], default="smart",
+                   help="self/league: which fixed baseline to anchor a fraction of iters against")
     p.add_argument("--teams-dir", default=str(Path(__file__).resolve().parent.parent / "teams"),
                    help="dir of Showdown team .txt files (a random one per side per battle)")
     p.add_argument("--eval-every", type=int, default=10)
@@ -308,7 +310,9 @@ def main() -> None:
         fixed_opp = RandomPolicy()
 
     rng_eval, md_eval, sm_eval = RandomPolicy(), MaxDamagePolicy(), SmartHeuristicPolicy()
-    anchor = MaxDamagePolicy()  # self/league: anchor a fraction of iters against this baseline
+    # self/league: anchor a fraction of iters against a fixed baseline so self-play can't drift
+    # off into beating only its past selves. Smart is the stronger, more informative anchor.
+    anchor = SmartHeuristicPolicy() if args.anchor == "smart" else MaxDamagePolicy()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     print(f"Engine PPO (vectorized): {args.iters} iters x {args.batch} battles vs {args.opponent} "

@@ -1,0 +1,138 @@
+"""Elo ladder — a strength metric that doesn't saturate.
+
+Win% vs any single fixed baseline tops out (the agent beats random/maxdamage/smart all
+~70-100%), so it stops measuring progress. A ladder plays a round-robin among the fixed
+baselines AND a set of checkpoints, then fits Bradley-Terry / Elo ratings: everyone is ranked
+relative to everyone, so improvement past the heuristic shows up as Elo, and self-play
+snapshots can be ordered against each other.
+
+    cd agent
+    uv run python ladder.py --ckpts models_obs2_smart/pg_best.pt
+    uv run python ladder.py --ckpts models_league/pg_iter*.pt --battles 150 --mirror
+
+Each pair plays `--battles` games, split evenly across which side leads (cancels any P1 edge);
+`--mirror` gives both sides the same team (removes team-matchup luck, isolating skill).
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import random
+from pathlib import Path
+
+import torch
+
+import train_engine as T  # select_batch (greedy net action), _STATIC machinery
+from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM
+from cinnabar.engine_cpp import StaticData, load_teams, play_battle
+import cinnabar_engine as ce  # noqa: E402
+from cinnabar.policy import MaxDamagePolicy, Policy, RandomPolicy, SmartHeuristicPolicy
+from cinnabar.rl.net import ActionScorer
+from cinnabar.state import BattleState
+
+
+class NetPolicy(Policy):
+    """Wrap a trained ActionScorer as a greedy Policy (argmax over legal actions)."""
+
+    def __init__(self, net, device: str = "cpu") -> None:
+        self.net, self.device = net, device
+
+    def select_action(self, state: BattleState):
+        idx = T.select_batch(self.net, [state], self.device, sample=False)[0]
+        return state.available_actions[idx]
+
+
+def _load_net(path: str, hidden: int, device: str) -> NetPolicy:
+    net = ActionScorer(GLOBAL_DIM, ACTION_DIM, hidden).to(device)
+    net.load_state_dict(torch.load(path, map_location=device))
+    net.eval()
+    return NetPolicy(net, device)
+
+
+def _play(p1, p2, teams, n, base, mirror, static, turn_limit):
+    """Return p1's score (win=1, tie=0.5) over n games, split across both lead positions."""
+    score = 0.0
+    for i in range(n):
+        t1 = random.choice(teams)
+        t2 = t1 if mirror else random.choice(teams)
+        a, b = (p1, p2) if i % 2 == 0 else (p2, p1)  # alternate who leads (cancels P1 edge)
+        r = play_battle(a, b, t1, t2, static, base + i, tag=f"{base}_{i}", turn_limit=turn_limit).result()
+        p1_is_a = i % 2 == 0
+        if r == ce.Result.Tie or r == ce.Result.Ongoing:
+            score += 0.5
+        elif (r == ce.Result.P1Win) == p1_is_a:  # the side p1 played on won
+            score += 1.0
+    return score
+
+
+def _elo(names, wins, games, anchor="random"):
+    """Bradley-Terry MLE (Hunter MM), Laplace-smoothed, reported on the Elo scale."""
+    n = len(names)
+    p = [1.0] * n
+    sw = [[wins[i][j] + 0.5 for j in range(n)] for i in range(n)]   # +0.5 smoothing
+    sg = [[games[i][j] + 1.0 for j in range(n)] for i in range(n)]
+    for _ in range(1000):
+        new = p[:]
+        for i in range(n):
+            num = sum(sw[i][j] for j in range(n) if j != i)
+            den = sum(sg[i][j] / (p[i] + p[j]) for j in range(n) if j != i)
+            new[i] = num / den if den else p[i]
+        gm = math.exp(sum(math.log(max(x, 1e-9)) for x in new) / n)  # normalise geo-mean to 1
+        new = [x / gm for x in new]
+        if max(abs(a - b) for a, b in zip(p, new)) < 1e-9:
+            p = new
+            break
+        p = new
+    elo = [400.0 * math.log10(max(x, 1e-9)) for x in p]
+    shift = 1000.0 - (elo[names.index(anchor)] if anchor in names else min(elo))
+    return [e + shift for e in elo]
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Elo ladder over baselines + checkpoints.")
+    ap.add_argument("--ckpts", nargs="*", default=[], help="checkpoint .pt files to rate")
+    ap.add_argument("--teams-dir", default=str(Path(__file__).resolve().parent.parent / "teams"))
+    ap.add_argument("--battles", type=int, default=120, help="games per pair")
+    ap.add_argument("--hidden", type=int, default=128)
+    ap.add_argument("--device", default="cpu")
+    ap.add_argument("--turn-limit", type=int, default=500)
+    ap.add_argument("--mirror", action="store_true", help="same team both sides (isolate skill)")
+    ap.add_argument("--seed", type=int, default=0)
+    a = ap.parse_args()
+    random.seed(a.seed)
+    torch.manual_seed(a.seed)
+
+    static = StaticData(1)
+    teams = load_teams(a.teams_dir) or T._FALLBACK_TEAMS
+
+    players: list[tuple[str, Policy]] = [
+        ("random", RandomPolicy()), ("maxdamage", MaxDamagePolicy()), ("smart", SmartHeuristicPolicy()),
+    ]
+    for c in a.ckpts:
+        players.append((Path(c).parent.name + "/" + Path(c).stem, _load_net(c, a.hidden, a.device)))
+
+    names = [n for n, _ in players]
+    k = len(players)
+    wins = [[0.0] * k for _ in range(k)]
+    games = [[0.0] * k for _ in range(k)]
+    base = 1
+    for i in range(k):
+        for j in range(i + 1, k):
+            s = _play(players[i][1], players[j][1], teams, a.battles, base, a.mirror, static, a.turn_limit)
+            base += a.battles
+            wins[i][j], wins[j][i] = s, a.battles - s
+            games[i][j] = games[j][i] = a.battles
+
+    elo = _elo(names, wins, games)
+    order = sorted(range(k), key=lambda i: -elo[i])
+    print(f"\nElo ladder  ({a.battles} games/pair{', mirror' if a.mirror else ''}, anchor random=1000)\n")
+    print(f"  {'player':28s} {'elo':>6s}  {'win%':>6s}")
+    for i in order:
+        tot_w = sum(wins[i][j] for j in range(k) if j != i)
+        tot_g = sum(games[i][j] for j in range(k) if j != i)
+        print(f"  {names[i]:28s} {elo[i]:6.0f}  {100.0 * tot_w / max(tot_g, 1):6.1f}")
+
+
+if __name__ == "__main__":
+    main()
