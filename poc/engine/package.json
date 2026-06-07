@@ -4,9 +4,9 @@
   "type": "module",
   "description": "Throughput proof-of-concept for @pkmn/engine (Gen 1).",
   "dependencies": {
-    "@pkmn/engine": "*",
-    "@pkmn/data": "*",
-    "@pkmn/dex": "*",
-    "@pkmn/sets": "*"
+    "@pkmn/engine": "dev",
+    "@pkmn/data": "latest",
+    "@pkmn/dex": "latest",
+    "@pkmn/sets": "latest"
   }
 }

@@ -29,6 +29,13 @@ data/
 *.sqlite
 *.db
 
+# --- C++ engine build ---
+build/
+*.o
+*.a
+*.so
+*.dylib
+
 # --- OS / editor ---
 .DS_Store
 Thumbs.db

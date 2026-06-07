@@ -23,10 +23,17 @@ interface. The progression is deliberately incremental:
 
 ## Architecture decisions (and the reasoning — don't relitigate without cause)
 
-1. **Do NOT write a custom battle simulator (C++ or otherwise).** The hard part of Pokémon
-   is faithfully implementing the mechanics, not raw speed. Showdown is the de facto
-   reference implementation; reimplementing it is a months-long, bug-prone detour, and any
-   inaccuracy means the agent trains against a game that isn't the real game.
+1. **Custom C++ engine — now an explicit goal (`engine/`), a deliberate reversal of the
+   original "don't".** We originally ruled out a custom simulator because the hard part of
+   Pokémon is mechanics *fidelity*, not speed, and Showdown is the de facto reference. That
+   reasoning still holds if the goal is "fastest path to a strong agent." But as a chosen
+   **engineering project** (Conor, June 2026 — `@pkmn/engine` being pre-v0.1/unbuildable
+   removed the off-the-shelf fast option), we are building a fast Gen 1 engine in C++. To
+   avoid the fidelity trap it is (a) **scoped** to the moves/species our teams use, expanding
+   outward, and (b) **validated by differential testing against Showdown** (identical battle +
+   RNG, diff turn-for-turn). Showdown's role shifts from training backend to **fidelity oracle**.
+   Static game data (type chart, base stats, movedex) should be **generated from Showdown data**,
+   not hand-typed. The poke-env training path (`agent/`) still works and is unaffected.
 2. **Throughput is not the early bottleneck.** The early blockers are state representation,
    reward shaping, and a training loop that converges. Run many headless Showdown instances
    in parallel for plenty of games/sec.
