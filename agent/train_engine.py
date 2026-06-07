@@ -27,7 +27,7 @@ import torch
 from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM, TEAM_SIZE, featurize
 from cinnabar.engine_cpp import StaticData, build_state, final_material, load_teams  # inserts engine/build on sys.path
 import cinnabar_engine as ce  # noqa: E402
-from cinnabar.policy import MaxDamagePolicy, RandomPolicy  # noqa: E402
+from cinnabar.policy import MaxDamagePolicy, RandomPolicy, SmartHeuristicPolicy  # noqa: E402
 from cinnabar.rl.agent import StepRecord  # noqa: E402
 from cinnabar.rl.net import ActionScorer  # noqa: E402
 from cinnabar.rl.returns import discounted_returns, standardize  # noqa: E402
@@ -67,7 +67,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--reward", choices=["sparse", "shaped", "dense"], default="shaped")
     p.add_argument("--faint-value", type=float, default=0.5)
     p.add_argument("--dmg-value", type=float, default=1.0)
-    p.add_argument("--opponent", choices=["random", "maxdamage", "self", "league"], default="self")
+    p.add_argument("--opponent", choices=["random", "maxdamage", "smart", "self", "league"],
+                   default="self")
     p.add_argument("--snapshot-every", type=int, default=10,
                    help="self: refresh the opponent every N iters; league: add a snapshot every N iters")
     p.add_argument("--anchor-frac", type=float, default=0.5,
@@ -301,17 +302,26 @@ def main() -> None:
         fixed_opp = _snapshot(net, args)  # one snapshot, refreshed every snapshot-every
     elif args.opponent == "maxdamage":
         fixed_opp = MaxDamagePolicy()
+    elif args.opponent == "smart":
+        fixed_opp = SmartHeuristicPolicy()
     else:
         fixed_opp = RandomPolicy()
 
-    rng_eval, md_eval = RandomPolicy(), MaxDamagePolicy()
+    rng_eval, md_eval, sm_eval = RandomPolicy(), MaxDamagePolicy(), SmartHeuristicPolicy()
     anchor = MaxDamagePolicy()  # self/league: anchor a fraction of iters against this baseline
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     print(f"Engine PPO (vectorized): {args.iters} iters x {args.batch} battles vs {args.opponent} "
           f"[{args.reward} reward]. -> {out}/")
 
-    best_md = -1.0
+    # Rank checkpoints on the SmartHeuristic yardstick — max-damage is too weak and exploitable
+    # to rank by (mirror eval showed its win% is ~uncorrelated with real strength). Seeding from
+    # the loaded net also stops a resume from clobbering a good pg_best.pt on the first eval.
+    best_sm = -1.0
+    if args.init:
+        best_sm = eval_winrate(net, sm_eval, args, args.eval_battles, 0)
+        print(f"init checkpoint: vs smart {best_sm:5.1f}% (pg_best.pt overwritten only if beaten)")
+
     for it in range(1, args.iters + 1):
         t0 = time.time()
         if args.opponent in ("self", "league") and random.random() < args.anchor_frac:
@@ -332,9 +342,11 @@ def main() -> None:
         if it % args.eval_every == 0:
             wr_rng = eval_winrate(net, rng_eval, args, args.eval_battles, it)
             wr_md = eval_winrate(net, md_eval, args, args.eval_battles, it + 1)
-            print(f"         eval (greedy) | vs random {wr_rng:5.1f}% | vs maxdmg {wr_md:5.1f}%")
-            if wr_md > best_md:
-                best_md = wr_md
+            wr_sm = eval_winrate(net, sm_eval, args, args.eval_battles, it + 2)
+            print(f"         eval (greedy) | vs random {wr_rng:5.1f}% | vs maxdmg {wr_md:5.1f}% "
+                  f"| vs smart {wr_sm:5.1f}%")
+            if wr_sm > best_sm:
+                best_sm = wr_sm
                 torch.save(net.state_dict(), out / "pg_best.pt")
 
         if it % args.snapshot_every == 0:

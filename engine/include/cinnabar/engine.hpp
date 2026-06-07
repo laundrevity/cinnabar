@@ -2,12 +2,12 @@
 //
 // Covers: 6-Pokémon teams + switching (with forced switch on faint), status
 // (sleep/freeze/paralysis/burn/poison) and the moves that cause them, healing
-// (Recover/Rest), Reflect, Explosion/Self-Destruct, fixed-damage moves, and the
-// Gen 1 damage formula / stat formula / type chart.
+// (Recover/Rest), Reflect, Explosion/Self-Destruct, fixed-damage moves, stat stages,
+// PP/Struggle, Hyper Beam recharge, and the Gen 1 damage/stat/type formulas — all
+// validated bit-for-bit against Showdown (Gen 5 LCG RNG).
 //
-// Known simplifications (to refine via differential testing vs Showdown): the
-// 1/256 miss, exact crit rate, freeze thaw, PP/Struggle, stat stages, Hyper Beam
-// recharge, and Showdown-bit-compatible RNG are not yet modelled.
+// Not yet modelled (refine via differential testing vs Showdown): freeze thaw, confusion,
+// Substitute, Counter, partial-trapping (Wrap/Fire Spin), multi-turn moves (Thrash/Dig/Fly).
 #pragma once
 
 #include <cstdint>
@@ -58,6 +58,7 @@ struct MoveData {
     int boost_chance = 0;            // 0 = always (status move); else % chance (a 2ndary)
     bool high_crit = false;          // high crit-ratio moves (Slash, Razor Leaf, Crabhammer, ...)
     int pp = 0;                      // base PP (0 = untracked, e.g. hand-built test moves)
+    bool recharge = false;           // Hyper Beam: user must spend next turn recharging unless it KO'd
 };
 
 struct Pokemon {
@@ -69,7 +70,8 @@ struct Pokemon {
     int boost_atk = 0, boost_def = 0, boost_spc = 0, boost_spe = 0;  // stages, -6..+6
     Status status = Status::None;
     int sleep_turns = 0;
-    bool reflect = false;  // volatile: Reflect screen, cleared on switch out
+    bool reflect = false;        // volatile: Reflect screen, cleared on switch out
+    bool must_recharge = false;  // volatile: owes a Hyper Beam recharge turn; cleared on switch
     std::vector<const MoveData*> moves;
     std::vector<int> pp;  // current PP per move slot (parallel to moves); -1 = untracked/unlimited
 

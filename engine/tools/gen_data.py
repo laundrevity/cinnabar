@@ -141,8 +141,15 @@ def translate_move(mid: str, m: dict) -> tuple:
                 bstat, bstages, bfoe, bchance = idx, st, "true", int(sec.get("chance", 100))
 
     pp = int(m.get("pp", 0) or 0)
+    # Recharge (Hyper Beam): prefer Showdown's data (flags.recharge / self.volatileStatus), but
+    # fall back to the move id — Hyper Beam is the only Gen 1 recharge move, and poke-env may not
+    # surface `flags`/`self`.
+    flags = m.get("flags") or {}
+    selfvol = (m.get("self") or {}).get("volatileStatus")
+    recharge = "true" if (flags.get("recharge") or selfvol == "mustrecharge"
+                          or mid == "hyperbeam") else "false"
     return (name, typ, cat, power, accuracy, fixed, effect, effect_chance,
-            bstat, bstages, bfoe, bchance, high_crit, pp)
+            bstat, bstages, bfoe, bchance, high_crit, pp, recharge)
 
 
 def build_lines(correct, dex, moves) -> tuple[list[str], int, int]:
@@ -183,7 +190,7 @@ def build_lines(correct, dex, moves) -> tuple[list[str], int, int]:
     lines.append("struct MoveEntry { const char* name; Type type; Category category; "
                  "int power, accuracy, fixed; Effect effect; int effect_chance; "
                  "int boost_stat, boost_stages; bool boost_target_foe; int boost_chance; "
-                 "bool high_crit; int pp; };")
+                 "bool high_crit; int pp; bool recharge; };")
     lines.append("inline const MoveEntry GEN1_MOVES[] = {")
     n_moves = 0
     for mid in sorted(moves, key=lambda k: moves[k].get("num", 0)):
@@ -191,9 +198,10 @@ def build_lines(correct, dex, moves) -> tuple[list[str], int, int]:
         if type_to_enum(m.get("type", "")) == "Type::None":
             continue
         (name, typ, cat, power, accuracy, fixed, effect, ec,
-         bstat, bstages, bfoe, bchance, high_crit, pp) = translate_move(mid, m)
+         bstat, bstages, bfoe, bchance, high_crit, pp, recharge) = translate_move(mid, m)
         lines.append(f'    {{"{name}", {typ}, {cat}, {power}, {accuracy}, {fixed}, '
-                     f'{effect}, {ec}, {bstat}, {bstages}, {bfoe}, {bchance}, {high_crit}, {pp}}},')
+                     f'{effect}, {ec}, {bstat}, {bstages}, {bfoe}, {bchance}, {high_crit}, {pp}, '
+                     f'{recharge}}},')
         n_moves += 1
     lines += ["};", "", "}  // namespace cinnabar"]
     return lines, n_species, n_moves
@@ -230,7 +238,7 @@ def main() -> None:
     # Show how a few key moves translated, for eyeballing fidelity.
     print("\n=== Sample translations ===")
     for mid in ("bodyslam", "psychic", "amnesia", "swordsdance", "slash", "thunderwave",
-                "recover", "seismictoss", "explosion", "growl", "blizzard", "icebeam"):
+                "recover", "seismictoss", "explosion", "growl", "blizzard", "icebeam", "hyperbeam"):
         if mid in moves:
             print(f"  {mid:12s} -> {translate_move(mid, moves[mid])}")
 

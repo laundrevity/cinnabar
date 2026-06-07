@@ -43,7 +43,8 @@ const MoveData& move(const std::string& name) {
         for (const auto& e : GEN1_MOVES) {
             m.emplace(e.name, MoveData{e.name, e.type, e.category, e.power, e.accuracy, e.fixed,
                                        e.effect, e.effect_chance, e.boost_stat, e.boost_stages,
-                                       e.boost_target_foe, e.boost_chance, e.high_crit, e.pp});
+                                       e.boost_target_foe, e.boost_chance, e.high_crit, e.pp,
+                                       e.recharge});
         }
         return m;
     }();
@@ -193,6 +194,9 @@ double combined_effectiveness(Type atk, const Species* def) {
 }
 
 bool can_act(Pokemon& p, RNG& rng) {
+    // Showdown gen1 onBeforeMove priority order: frz(12) > slp(10) > mustrecharge(7) > par(2).
+    // The order matters for RNG alignment: recharge cancels the move *before* paralysis rolls,
+    // so a recharge turn must NOT consume the 63/256 full-paralysis draw.
     switch (p.status) {
         case Status::Freeze:
             return false;  // Gen 1: frozen solid (thaw not modelled yet)
@@ -200,11 +204,16 @@ bool can_act(Pokemon& p, RNG& rng) {
             if (p.sleep_turns > 0) --p.sleep_turns;
             if (p.sleep_turns <= 0) p.status = Status::None;
             return false;  // Gen 1: a turn is always lost to sleep, including the wake turn
-        case Status::Paralysis:
-            return !rng.chance(63, 256);  // Showdown gen1: 63/256 chance of full paralysis
         default:
-            return true;
+            break;
     }
+    if (p.must_recharge) {        // Hyper Beam recharge: spend this turn doing nothing, clear the
+        p.must_recharge = false;  // flag, and skip the paralysis roll (priority 7 > par's 2).
+        return false;
+    }
+    if (p.status == Status::Paralysis)
+        return !rng.chance(63, 256);  // Showdown gen1: 63/256 chance of full paralysis
+    return true;
 }
 
 void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
@@ -366,6 +375,9 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
     }
     apply_effect(mv, a, d, rng);
     apply_boosts(mv, a, d, rng);
+    // Hyper Beam: the user owes a recharge turn — UNLESS the move KO'd the target (the famous
+    // Gen 1 "no recharge on KO"). Reaching here means the move hit (a miss/immunity returned early).
+    if (mv->recharge && !d.fainted()) a.must_recharge = true;
 }
 
 void try_move(Side& as, Side& ds, int moveidx, RNG& rng) {
@@ -386,6 +398,7 @@ void do_switch(Side& s, int idx) {
     s.mon().reflect = false;  // Reflect ends when its user leaves the field
     s.active = idx;
     Pokemon& in = s.mon();
+    in.must_recharge = false;  // volatiles clear on switch (a recharge can't carry to a new mon)
     // Gen 1: stat stages reset on switch — recompute modified stats from the stored stats...
     in.boost_atk = in.boost_def = in.boost_spc = in.boost_spe = 0;
     in.m_atk = in.atk; in.m_def = in.def; in.m_spc = in.spc; in.m_spe = in.spe;
@@ -415,6 +428,10 @@ std::vector<Choice> Battle::choices(int player) const {
     };
     if (s.must_switch) {
         bench();
+        return out;
+    }
+    if (s.mon().must_recharge) {  // Hyper Beam recharge: locked to a single no-op move, no switch
+        out.push_back({ChoiceKind::Move, -2});
         return out;
     }
     int avail = 0;

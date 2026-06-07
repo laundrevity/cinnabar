@@ -95,7 +95,7 @@ def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str
     actions: list[Action] = []
     for c in battle.choices(player):
         if c.kind == ce.ChoiceKind.Move:
-            name = "Struggle" if c.index < 0 else my_moves[c.index]
+            name = {-1: "Struggle", -2: "Recharge"}.get(c.index) or my_moves[c.index]
             mm = static.move_meta(name)
             actions.append(Action(
                 index=len(actions), type=ActionType.MOVE, label=name, move_id=_to_id(name),

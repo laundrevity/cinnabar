@@ -20,14 +20,15 @@ import cinnabar_engine as ce  # noqa: E402
 
 # Matchup configurable via env (mirrors ref_trace.js, which inherits this environment).
 # CINNABAR_P{1,2}_TEAM = comma-separated species (each gets CINNABAR_P{1,2}_MOVE).
-def _team(team_env, sp_env, move_env):
-    species = (os.environ.get(team_env) or os.environ.get(sp_env) or "Tauros").split(",")
+def _team(team_env, sp_env, move_env, default_sp):
+    species = (os.environ.get(team_env) or os.environ.get(sp_env) or default_sp).split(",")
     move = os.environ.get(move_env, "Earthquake")
     return [(s.strip(), [move]) for s in species]
 
 
-P1 = _team("CINNABAR_P1_TEAM", "CINNABAR_P1_SPECIES", "CINNABAR_P1_MOVE")
-P2 = _team("CINNABAR_P2_TEAM", "CINNABAR_P2_SPECIES", "CINNABAR_P2_MOVE")
+# Defaults must match ref_trace.js (P1 Tauros, P2 Snorlax) or a bare sweep builds mismatched teams.
+P1 = _team("CINNABAR_P1_TEAM", "CINNABAR_P1_SPECIES", "CINNABAR_P1_MOVE", "Tauros")
+P2 = _team("CINNABAR_P2_TEAM", "CINNABAR_P2_SPECIES", "CINNABAR_P2_MOVE", "Snorlax")
 
 
 VOL = bool(os.environ.get("CINNABAR_VOL"))  # enable voluntary switches (mirrors ref_trace.js)
