@@ -50,6 +50,7 @@ function runBattle(seedWords, debug) {
             const p = side.active[0];
             console.error(`${label} ${p.set.species} L${p.level} maxhp=${p.maxhp} ability=${p.ability || "(none)"}`);
             console.error(`   storedStats = ${JSON.stringify(p.storedStats)}`);
+            console.error(`   moveSlots = ${JSON.stringify((p.baseMoveSlots || []).map(s => ({ id: s.id, maxpp: s.maxpp })))}`);
         }
     } else {
         battle = new Battle({

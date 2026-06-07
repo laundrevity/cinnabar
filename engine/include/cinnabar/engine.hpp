@@ -56,6 +56,8 @@ struct MoveData {
     int boost_stages = 0;            // signed number of stages
     bool boost_target_foe = false;   // false: user (Amnesia/Swords Dance); true: foe (Psychic 2ndary)
     int boost_chance = 0;            // 0 = always (status move); else % chance (a 2ndary)
+    bool high_crit = false;          // high crit-ratio moves (Slash, Razor Leaf, Crabhammer, ...)
+    int pp = 0;                      // base PP (0 = untracked, e.g. hand-built test moves)
 };
 
 struct Pokemon {
@@ -69,6 +71,7 @@ struct Pokemon {
     int sleep_turns = 0;
     bool reflect = false;  // volatile: Reflect screen, cleared on switch out
     std::vector<const MoveData*> moves;
+    std::vector<int> pp;  // current PP per move slot (parallel to moves); -1 = untracked/unlimited
 
     bool fainted() const { return hp <= 0; }
     double hp_fraction() const { return max_hp ? static_cast<double>(hp) / max_hp : 0.0; }

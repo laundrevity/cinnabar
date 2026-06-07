@@ -37,29 +37,14 @@ const Species& species(const std::string& name) {
 }
 
 const MoveData& move(const std::string& name) {
+    // Built from the generated GEN1_MOVES table (engine/tools/gen_data.py from Showdown).
     static const std::unordered_map<std::string, MoveData> table = [] {
         std::unordered_map<std::string, MoveData> m;
-        auto add = [&](MoveData md) { m.emplace(md.name, md); };
-        // Hand-coded for now (the moves our teams use); a codegen pass will source
-        // these from Showdown like gen1_data.hpp does for species.
-        // Psychic: 33% chance to lower the target's Special by 1 stage (Gen 1 secondary).
-        add({"Psychic", Type::Psychic, Category::Special, 90, 100, 0, Effect::None, 0, 2, -1, true, 33});
-        add({"Amnesia", Type::Psychic, Category::Status, 0, 100, 0, Effect::None, 0, 2, 2, false, 0});
-        add({"Swords Dance", Type::Normal, Category::Status, 0, 100, 0, Effect::None, 0, 0, 2, false, 0});
-        add({"Agility", Type::Psychic, Category::Status, 0, 100, 0, Effect::None, 0, 3, 2, false, 0});
-        add({"Thunder Wave", Type::Electric, Category::Status, 0, 100, 0, Effect::Paralyze, 100});
-        add({"Recover", Type::Normal, Category::Status, 0, 100, 0, Effect::Heal, 100});
-        add({"Soft-Boiled", Type::Normal, Category::Status, 0, 100, 0, Effect::Heal, 100});
-        add({"Seismic Toss", Type::Fighting, Category::Status, 0, 100, 100});
-        add({"Ice Beam", Type::Ice, Category::Special, 95, 100, 0, Effect::Freeze, 10});
-        add({"Thunderbolt", Type::Electric, Category::Special, 95, 100, 0, Effect::Paralyze, 10});
-        add({"Sleep Powder", Type::Grass, Category::Status, 0, 75, 0, Effect::Sleep, 100});
-        add({"Explosion", Type::Normal, Category::Physical, 170, 100, 0, Effect::SelfDestruct, 0});
-        add({"Body Slam", Type::Normal, Category::Physical, 85, 100, 0, Effect::Paralyze, 30});
-        add({"Earthquake", Type::Ground, Category::Physical, 100, 100});
-        add({"Blizzard", Type::Ice, Category::Special, 120, 90, 0, Effect::Freeze, 10});
-        add({"Hyper Beam", Type::Normal, Category::Physical, 150, 90});
-        add({"Rest", Type::Psychic, Category::Status, 0, 100, 0, Effect::Rest, 100});
+        for (const auto& e : GEN1_MOVES) {
+            m.emplace(e.name, MoveData{e.name, e.type, e.category, e.power, e.accuracy, e.fixed,
+                                       e.effect, e.effect_chance, e.boost_stat, e.boost_stages,
+                                       e.boost_target_foe, e.boost_chance, e.high_crit, e.pp});
+        }
         return m;
     }();
     auto it = table.find(name);
@@ -109,6 +94,9 @@ Pokemon make_pokemon(const Species* s, std::vector<const MoveData*> moves, int l
     p.m_spc = p.spc;
     p.m_spe = p.spe;
     p.moves = std::move(moves);
+    // PP per slot: Showdown's max = base * 8/5 (3 PP ups). Untracked moves (pp 0) -> unlimited.
+    for (const MoveData* mv : p.moves)
+        p.pp.push_back(mv && mv->pp > 0 ? mv->pp * 8 / 5 : -1);
     return p;
 }
 
@@ -281,22 +269,35 @@ void apply_boosts(const MoveData* mv, Pokemon& user, Pokemon& foe, RNG& rng) {
     Pokemon& tgt = mv->boost_target_foe ? foe : user;
     if (mv->boost_target_foe) {
         if (tgt.fainted()) return;  // secondary needs a surviving target
-        if (mv->boost_chance < 100) {
-            int num = (mv->boost_chance * 256 + 99) / 100;  // ceil(chance * 256 / 100)
+        if (mv->boost_chance > 0 && mv->boost_chance < 100) {  // a damaging move's % secondary
+            int num = (mv->boost_chance * 256 + 99) / 100;     // ceil(chance * 256 / 100)
             if (!rng.chance(num, 256)) return;
         }
+        // boost_chance 0 (a foe-targeting status move like Growl/Screech) or >=100: always apply.
     }
     do_boost(tgt, mv->boost_stat, mv->boost_stages);
     if (foe.status == Status::Paralysis) modify_stat(foe, 3, 0.25);  // Gen 1 re-application quirk
     if (foe.status == Status::Burn) modify_stat(foe, 0, 0.5);
 }
 
+// Struggle: used when every move is out of PP. Gen 1 — Normal, 50 BP, accuracy 100 (rolls the
+// 1/256 miss like any move), 1/2-damage recoil.
+static const MoveData STRUGGLE{"Struggle", Type::Normal, Category::Physical, 50, 100};
+
 void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
     Pokemon& a = as.mon();
     Pokemon& d = ds.mon();
-    if (moveidx < 0 || moveidx >= static_cast<int>(a.moves.size())) return;
-    const MoveData* mv = a.moves[moveidx];
-    if (!mv) return;
+    const bool struggle = (moveidx == -1);
+    const MoveData* mv;
+    if (struggle) {
+        mv = &STRUGGLE;
+    } else {
+        if (moveidx < 0 || moveidx >= static_cast<int>(a.moves.size())) return;
+        mv = a.moves[moveidx];
+        if (!mv) return;
+        if (a.pp[moveidx] > 0) --a.pp[moveidx];  // deduct PP on use (gen1: even if it misses/fails)
+    }
+    int dealt = 0;
 
     // Accuracy — Showdown gen1 rolls randomChance(clamp(floor(acc*255/100),1,255), 256) for
     // every non-self-targeting move, *including* 100%-accuracy ones (the 1/256 miss). Moves
@@ -306,7 +307,10 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
                           (mv->boost_stat >= 0 && !mv->boost_target_foe);  // Amnesia/SD/Agility
     if (!self_targeting && mv->accuracy > 0) {
         int acc = std::clamp(mv->accuracy * 255 / 100, 1, 255);
-        if (!rng.chance(acc, 256)) return;  // miss (includes the gen1 1/256)
+        if (!rng.chance(acc, 256)) {  // miss (includes the gen1 1/256)
+            if (mv->effect == Effect::SelfDestruct) a.hp = 0;  // gen1: Explosion faints user on a miss
+            return;
+        }
     }
 
     if (mv->fixed > 0) {
@@ -315,11 +319,15 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
         if (d.hp < 0) d.hp = 0;
     } else if (mv->power > 0 && !d.fainted()) {
         double mult = combined_effectiveness(mv->type, d.species);
-        if (mult == 0.0) return;  // immune: no damage, no secondary
+        if (mult == 0.0) {  // immune: no damage, no secondary
+            if (mv->effect == Effect::SelfDestruct) a.hp = 0;  // ...but Explosion still faints the user
+            return;
+        }
         bool stab = (mv->type == a.species->t1 || mv->type == a.species->t2);
         // Crit — Showdown gen1 derives the chance from BASE species Speed, not the live stat:
-        // critChance = clamp(floor(baseSpe/2)*2, 1, 255), then /2 for a normal crit ratio.
-        int crit_chance = std::clamp((a.species->spe / 2) * 2, 1, 255) / 2;
+        // base = clamp(floor(baseSpe/2)*2, 1, 255); then /2 (normal) or *4 clamp (high crit ratio).
+        int crit_chance = std::clamp((a.species->spe / 2) * 2, 1, 255);
+        crit_chance = mv->high_crit ? std::clamp(crit_chance * 4, 1, 255) : crit_chance / 2;
         bool crit = crit_chance > 0 && rng.chance(crit_chance, 256);
         bool physical = gen1_is_physical(mv->type);
         int atk, def;
@@ -346,11 +354,16 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng) {
                      a.species->name.c_str(), d.species->name.c_str(), atk, def,
                      static_cast<int>(stab), mult, static_cast<int>(crit), roll, dmg);
 #endif
-        d.hp -= dmg;
-        if (d.hp < 0) d.hp = 0;  // Showdown caps damage at remaining HP (fainted sits at 0)
+        int actual = dmg < d.hp ? dmg : d.hp;  // Showdown caps damage at the target's remaining HP
+        d.hp -= actual;
+        dealt = actual;
     }
 
     if (mv->effect == Effect::SelfDestruct) a.hp = 0;
+    if (struggle && dealt > 0) {  // Gen 1 Struggle recoil: floor(damage / 2), min 1
+        a.hp -= std::max(1, dealt / 2);
+        if (a.hp < 0) a.hp = 0;
+    }
     apply_effect(mv, a, d, rng);
     apply_boosts(mv, a, d, rng);
 }
@@ -395,8 +408,10 @@ std::vector<Choice> Battle::choices(int player) const {
         bench();
         return out;
     }
+    int avail = 0;
     for (int i = 0; i < static_cast<int>(s.mon().moves.size()); ++i)
-        out.push_back({ChoiceKind::Move, i});
+        if (s.mon().pp[i] != 0) { out.push_back({ChoiceKind::Move, i}); ++avail; }  // pp 0 = exhausted
+    if (avail == 0) out.push_back({ChoiceKind::Move, -1});  // all moves out of PP -> Struggle
     bench();
     return out;
 }
@@ -442,12 +457,21 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
 
     auto act1 = [&]() { if (m1) try_move(p1, p2, c1.index, rng); };
     auto act2 = [&]() { if (m2) try_move(p2, p1, c2.index, rng); };
-    if (p1_first) { act1(); if (tie) rng.random(0, 2); act2(); }
-    else          { act2(); if (tie) rng.random(0, 2); act1(); }
-    if (tie) { rng.random(0, 2); rng.random(0, 2); }
-
-    residual(p1.mon());
-    residual(p2.mon());
+    // If a side has no Pokémon left after the first move (e.g. Self-Destruct, or fainting to
+    // Struggle recoil), the battle is over: Showdown stops the turn here — no second move, no
+    // end-of-turn shuffles, no residual.
+    if (p1_first) {
+        act1();
+        if (result() == Result::Ongoing) { if (tie) rng.random(0, 2); act2(); }
+    } else {
+        act2();
+        if (result() == Result::Ongoing) { if (tie) rng.random(0, 2); act1(); }
+    }
+    if (result() == Result::Ongoing) {
+        if (tie) { rng.random(0, 2); rng.random(0, 2); }
+        residual(p1.mon());
+        residual(p2.mon());
+    }
 
     p1.must_switch = p1.mon().fainted() && p1.has_alive_bench();
     p2.must_switch = p2.mon().fainted() && p2.has_alive_bench();
