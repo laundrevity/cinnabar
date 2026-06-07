@@ -98,10 +98,23 @@ class StaticData:
         return mult
 
 
-def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str) -> BattleState:
-    """Translate the engine's view for `player` into a BattleState."""
+def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str,
+                reveal: set | None = None) -> BattleState:
+    """Translate the engine's view for `player` into a BattleState.
+
+    Partial information (the real game): when `reveal` — a persistent per-battle set of opponent
+    team indices the player has seen — is given, the opponent's bench is restricted to revealed
+    mons. The current active is always revealed and the set accumulates across turns, so it
+    doubles as the agent's memory of what the opponent has shown so far. `reveal=None` keeps the
+    old full-information view.
+    """
     ts = battle.team_state(player)        # [(species, hp_frac, status, fainted, active), ...]
     ots = battle.team_state(1 - player)
+    if reveal is not None:
+        opp_active_idx = next((i for i, e in enumerate(ots) if e[4]), None)
+        if opp_active_idx is not None:
+            reveal.add(opp_active_idx)
+    opp_indices = [i for i in range(len(ots)) if reveal is None or i in reveal]
 
     def active_view(entries, p: int) -> ActivePokemon | None:
         e = next((x for x in entries if x[4]), None)
@@ -144,12 +157,14 @@ def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str
             ))
 
     def team_mon(e) -> TeamMon:
-        return TeamMon(species=e[0], hp_fraction=e[1], fainted=e[3], status=(e[2] or None), active=e[4])
+        return TeamMon(species=e[0], hp_fraction=e[1], fainted=e[3], status=(e[2] or None),
+                       active=e[4], types=static.species_types(e[0]))
 
     return BattleState(
         turn=battle.turn, active=active_view(ts, player), opponent_active=active_view(ots, 1 - player),
         available_actions=actions, force_switch=battle.must_switch(player), battle_tag=tag,
-        team=[team_mon(e) for e in ts], opponent_team=[team_mon(e) for e in ots],  # full info (v1)
+        team=[team_mon(e) for e in ts],                          # our own team: fully known
+        opponent_team=[team_mon(ots[i]) for i in opp_indices],   # partial info: revealed mons only
     )
 
 
@@ -162,11 +177,13 @@ def play_battle(p1_policy, p2_policy, team1: Team, team2: Team, static: StaticDa
     spec2 = [(s, list(mvs)) for s, mvs in team2]
     battle = ce.make_battle(spec1, spec2, seed)
 
+    r1: set = set()  # what p1 has revealed about p2's team (and vice-versa) — partial info + memory
+    r2: set = set()
     turns = 0
     while battle.result() == ce.Result.Ongoing and turns < turn_limit:
         turns += 1
-        a1 = p1_policy.select_action(build_state(battle, 0, spec1, static, tag))
-        a2 = p2_policy.select_action(build_state(battle, 1, spec2, static, tag + "_opp"))
+        a1 = p1_policy.select_action(build_state(battle, 0, spec1, static, tag, reveal=r1))
+        a2 = p2_policy.select_action(build_state(battle, 1, spec2, static, tag + "_opp", reveal=r2))
         battle.step(battle.choices(0)[a1.index], battle.choices(1)[a2.index])
     return battle
 

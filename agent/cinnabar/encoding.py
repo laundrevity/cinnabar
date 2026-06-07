@@ -20,11 +20,19 @@ from .state import Action, ActionType, BattleState
 STATUS_ORDER = ["NONE", "BRN", "FRZ", "PAR", "PSN", "SLP"]
 _STATUS_INDEX = {name: i for i, name in enumerate(STATUS_ORDER)}
 
+# The 15 Gen 1 types, for per-mon type multi-hots (revealed opponent team).
+TYPE_ORDER = ["NORMAL", "FIGHTING", "FLYING", "POISON", "GROUND", "ROCK", "BUG", "GHOST",
+              "FIRE", "WATER", "GRASS", "ELECTRIC", "PSYCHIC", "ICE", "DRAGON"]
+_TYPE_INDEX = {t: i for i, t in enumerate(TYPE_ORDER)}
+
 TEAM_SIZE = 6
+# Per opponent-team slot: present + hp + fainted + statused + a 15-type multi-hot.
+_OPP_MON_DIM = 4 + len(TYPE_ORDER)
 
 # global = hps(2) + two status one-hots + force_switch + turn + team aggregates(4) + speed(1)
 #          + active volatiles(12): own+opp boosts(8) + own+opp recharge(2) + own+opp sleep(2)
-GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12
+#          + revealed opponent team: TEAM_SIZE slots x _OPP_MON_DIM (partial-info memory)
+GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12 + TEAM_SIZE * _OPP_MON_DIM
 # action = move features(7) + switch-target features(3) + fixed-damage(1) + effect features(11):
 #   status one-hot(5) + chance(1) + heals/boosts_self/lowers_foe/recharge/self_destruct(5)
 ACTION_DIM = 7 + 3 + 1 + 11
@@ -56,6 +64,25 @@ def _status_one_hot(status: str | None) -> list[float]:
     key = "NONE" if not status else ("PSN" if status == "TOX" else status)
     vec[_STATUS_INDEX.get(key, 0)] = 1.0
     return vec
+
+
+def _encode_opp_team(state: BattleState) -> list[float]:
+    """Per-mon features for the *revealed* opponent team, padded to TEAM_SIZE slots. Unrevealed
+    slots are all-zero, so this vector grows as the battle reveals mons — the agent's memory of
+    what the opponent has shown (species type, current HP, status, whether it's fainted)."""
+    feats: list[float] = []
+    team = state.opponent_team[:TEAM_SIZE]
+    for i in range(TEAM_SIZE):
+        if i < len(team):
+            m = team[i]
+            types = [0.0] * len(TYPE_ORDER)
+            for t in m.types:
+                if t in _TYPE_INDEX:
+                    types[_TYPE_INDEX[t]] = 1.0
+            feats += [1.0, m.hp_fraction, 1.0 if m.fainted else 0.0, 1.0 if m.status else 0.0, *types]
+        else:
+            feats += [0.0] * _OPP_MON_DIM
+    return feats
 
 
 def encode_global(state: BattleState) -> list[float]:
@@ -100,6 +127,7 @@ def encode_global(state: BattleState) -> list[float]:
         opp_recharge,
         our_sleep,
         opp_sleep,
+        *_encode_opp_team(state),
     ]
 
 

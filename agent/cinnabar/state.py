@@ -83,6 +83,7 @@ class TeamMon:
     fainted: bool
     status: Optional[str] = None
     active: bool = False
+    types: tuple[str, ...] = ()  # known once the mon has been revealed (partial info)
 
 
 @dataclass
