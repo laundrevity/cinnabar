@@ -108,11 +108,21 @@ def emit_header(correct: dict[tuple[str, str], int], dex: dict, out: Path) -> No
     # Base stats (Gen 1: special = spa). Types mapped to the Type enum.
     lines.append("struct SpeciesEntry { const char* name; Type t1, t2; int hp, atk, def, spc, spe; };")
     lines.append("inline const SpeciesEntry GEN1_SPECIES[] = {")
+    emitted = 0
+    skipped = []
     for key in sorted(dex, key=lambda k: dex[k].get("num", 0)):
         e = dex[key]
+        num = e.get("num", 0)
+        if not (1 <= num <= 151):
+            continue  # Gen 1 dex numbers only
+        if e.get("forme"):
+            continue  # base forms only — exclude Alola/Galar/Mega/Totem forms (they share base nums)
         bs = e.get("baseStats") or e.get("base_stats")
         types = [t.upper() for t in e.get("types", [])]
         if not bs or not types:
+            continue
+        if any(t not in ENUM for t in types):
+            skipped.append((e.get("name", key), types))  # would flag a non-Gen1 typing on a Gen1 mon
             continue
         t1 = ENUM[types[0]]
         t2 = ENUM[types[1]] if len(types) > 1 else "Type::None"
@@ -120,7 +130,13 @@ def emit_header(correct: dict[tuple[str, str], int], dex: dict, out: Path) -> No
         lines.append(
             f'    {{"{name}", {t1}, {t2}, {bs["hp"]}, {bs["atk"]}, {bs["def"]}, {bs["spa"]}, {bs["spe"]}}},'
         )
+        emitted += 1
     lines.append("};")
+    if skipped:
+        print("  warning: skipped base species with non-Gen1 types (check gen1 mod typings):")
+        for name, types in skipped:
+            print(f"    {name}: {types}")
+    return emitted
     lines.append("")
     lines.append("}  // namespace cinnabar")
     out.write_text("\n".join(lines) + "\n")
@@ -143,8 +159,8 @@ def main() -> None:
 
     dex = gen1.pokedex or gen1.load_pokedex(1)
     out = Path(__file__).resolve().parents[1] / "include" / "cinnabar" / "gen1_data.hpp"
-    emit_header(correct, dex, out)
-    print(f"\nwrote {out} ({len(dex)} species + corrected type chart)")
+    n = emit_header(correct, dex, out)
+    print(f"\nwrote {out} ({n} Gen 1 species + corrected type chart)")
 
 
 if __name__ == "__main__":
