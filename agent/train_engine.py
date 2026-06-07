@@ -25,7 +25,8 @@ from pathlib import Path
 import torch
 
 from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM, TEAM_SIZE, featurize
-from cinnabar.engine_cpp import StaticData, build_state, final_material, load_teams  # inserts engine/build on sys.path
+from cinnabar.engine_cpp import (  # inserts engine/build on sys.path
+    Reveal, StaticData, build_state, final_material, load_teams, reveal_move)
 import cinnabar_engine as ce  # noqa: E402
 from cinnabar.policy import MaxDamagePolicy, RandomPolicy, SmartHeuristicPolicy  # noqa: E402
 from cinnabar.rl.agent import StepRecord  # noqa: E402
@@ -223,7 +224,7 @@ def _make_battles(n, base):
         s2 = [(s, list(m)) for s, m in t2]
         # r1/r2: persistent per-battle reveal sets (partial info + the agent's revealed-team memory).
         items.append({"b": ce.make_battle(s1, s2, base + i), "s1": s1, "s2": s2,
-                      "tag": f"{base}_{i}", "r1": set(), "r2": set()})
+                      "tag": f"{base}_{i}", "r1": Reveal(), "r2": Reveal()})
     return items
 
 
@@ -236,12 +237,16 @@ def _run(items, net, opp, args, *, record_buf, greedy_learner=False):
         live = [it for it in items if it["b"].result() == ce.Result.Ongoing]
         if not live:
             break
-        st1 = [build_state(it["b"], 0, it["s1"], _STATIC, it["tag"], reveal=it["r1"]) for it in live]
-        st2 = [build_state(it["b"], 1, it["s2"], _STATIC, it["tag"], reveal=it["r2"]) for it in live]
+        st1 = [build_state(it["b"], 0, it["s1"], _STATIC, it["tag"], reveal=it["r1"], opp_team=it["s2"])
+               for it in live]
+        st2 = [build_state(it["b"], 1, it["s2"], _STATIC, it["tag"], reveal=it["r2"], opp_team=it["s1"])
+               for it in live]
         a1 = select_batch(net, st1, args.device, sample=not greedy_learner,
                           record_buf=record_buf, tags=[it["tag"] for it in live] if record_buf is not None else None)
         a2 = _select_opp(opp, st2, args.device)
         for j, it in enumerate(live):
+            reveal_move(it["r1"], st2[j], st2[j].available_actions[a2[j]])  # p0 sees p1's move
+            reveal_move(it["r2"], st1[j], st1[j].available_actions[a1[j]])  # p1 sees p0's move
             it["b"].step(it["b"].choices(0)[a1[j]], it["b"].choices(1)[a2[j]])
 
 

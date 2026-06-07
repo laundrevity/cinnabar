@@ -98,3 +98,5 @@ class BattleState:
     battle_tag: Optional[str] = None  # groups trajectory steps by battle
     team: list[TeamMon] = field(default_factory=list)  # our full team
     opponent_team: list[TeamMon] = field(default_factory=list)  # opponent's *revealed* mons
+    # Memory: moves the opponent's *active* mon has been seen using (as Action threat profiles).
+    opponent_revealed_moves: list[Action] = field(default_factory=list)

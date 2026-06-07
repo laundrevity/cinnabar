@@ -98,8 +98,31 @@ class StaticData:
         return mult
 
 
+class Reveal:
+    """Per-battle partial-information memory: which opponent mons have been seen, and which moves
+    each has been seen using. Accumulates over a battle (monotonic) — the agent's memory."""
+
+    __slots__ = ("mons", "moves")
+
+    def __init__(self) -> None:
+        self.mons: set[int] = set()          # revealed opponent team indices
+        self.moves: dict[str, set[str]] = {}  # species -> set of revealed move_ids
+
+    def see_move(self, species: str, move_id: str) -> None:
+        if move_id and move_id not in ("struggle", "recharge"):
+            self.moves.setdefault(species, set()).add(move_id)
+
+
+def reveal_move(observer: "Reveal | None", mover_state: BattleState, action) -> None:
+    """Record (into the observer's memory) that `mover_state`'s active just used `action`."""
+    if observer is None or action is None or mover_state.active is None:
+        return
+    if action.type == ActionType.MOVE and action.move_id:
+        observer.see_move(mover_state.active.species, action.move_id)
+
+
 def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str,
-                reveal: set | None = None) -> BattleState:
+                reveal: "Reveal | None" = None, opp_team: Team | None = None) -> BattleState:
     """Translate the engine's view for `player` into a BattleState.
 
     Partial information (the real game): when `reveal` — a persistent per-battle set of opponent
@@ -113,8 +136,8 @@ def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str
     if reveal is not None:
         opp_active_idx = next((i for i, e in enumerate(ots) if e[4]), None)
         if opp_active_idx is not None:
-            reveal.add(opp_active_idx)
-    opp_indices = [i for i in range(len(ots)) if reveal is None or i in reveal]
+            reveal.mons.add(opp_active_idx)
+    opp_indices = [i for i in range(len(ots)) if reveal is None or i in reveal.mons]
 
     def active_view(entries, p: int) -> ActivePokemon | None:
         e = next((x for x in entries if x[4]), None)
@@ -160,11 +183,31 @@ def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str
         return TeamMon(species=e[0], hp_fraction=e[1], fainted=e[3], status=(e[2] or None),
                        active=e[4], types=static.species_types(e[0]))
 
+    # Opponent memory: the active opponent's revealed moves as a threat profile (effect features +
+    # type-effectiveness vs OUR active). Empty until the opponent has shown this mon use moves.
+    opp_revealed: list[Action] = []
+    if reveal is not None and opp_team is not None and opp_entry is not None:
+        seen = reveal.moves.get(opp_entry[0])
+        if seen:
+            my_types = static.species_types(ts[active_pos][0])
+            spec_moves = next((mvs for sp, mvs in opp_team if sp == opp_entry[0]), [])
+            for mv_name in spec_moves:
+                if _to_id(mv_name) in seen:
+                    mm = static.move_meta(mv_name)
+                    opp_revealed.append(Action(
+                        index=len(opp_revealed), type=ActionType.MOVE, label=mv_name,
+                        move_id=_to_id(mv_name), base_power=mm["base_power"], move_type=mm["type"],
+                        category=mm["category"], accuracy=mm["accuracy"], fixed_damage=mm["fixed"],
+                        effect_status=mm["effect_status"], recharge=mm["recharge"],
+                        type_multiplier=static.type_mult(mm["type"], my_types) if my_types else None,
+                    ))
+
     return BattleState(
         turn=battle.turn, active=active_view(ts, player), opponent_active=active_view(ots, 1 - player),
         available_actions=actions, force_switch=battle.must_switch(player), battle_tag=tag,
         team=[team_mon(e) for e in ts],                          # our own team: fully known
         opponent_team=[team_mon(ots[i]) for i in opp_indices],   # partial info: revealed mons only
+        opponent_revealed_moves=opp_revealed,                    # memory: active opp's shown moves
     )
 
 
@@ -177,13 +220,16 @@ def play_battle(p1_policy, p2_policy, team1: Team, team2: Team, static: StaticDa
     spec2 = [(s, list(mvs)) for s, mvs in team2]
     battle = ce.make_battle(spec1, spec2, seed)
 
-    r1: set = set()  # what p1 has revealed about p2's team (and vice-versa) — partial info + memory
-    r2: set = set()
+    r1, r2 = Reveal(), Reveal()  # p1's memory of p2 (and vice-versa) — partial info + revealed moves
     turns = 0
     while battle.result() == ce.Result.Ongoing and turns < turn_limit:
         turns += 1
-        a1 = p1_policy.select_action(build_state(battle, 0, spec1, static, tag, reveal=r1))
-        a2 = p2_policy.select_action(build_state(battle, 1, spec2, static, tag + "_opp", reveal=r2))
+        s1 = build_state(battle, 0, spec1, static, tag, reveal=r1, opp_team=spec2)
+        s2 = build_state(battle, 1, spec2, static, tag + "_opp", reveal=r2, opp_team=spec1)
+        a1 = p1_policy.select_action(s1)
+        a2 = p2_policy.select_action(s2)
+        reveal_move(r1, s2, a2)  # p1 sees p2's move
+        reveal_move(r2, s1, a1)  # p2 sees p1's move
         battle.step(battle.choices(0)[a1.index], battle.choices(1)[a2.index])
     return battle
 

@@ -28,11 +28,15 @@ _TYPE_INDEX = {t: i for i, t in enumerate(TYPE_ORDER)}
 TEAM_SIZE = 6
 # Per opponent-team slot: present + hp + fainted + statused + a 15-type multi-hot.
 _OPP_MON_DIM = 4 + len(TYPE_ORDER)
+# Threat profile of the active opponent's revealed moves (memory): count, max power,
+# max type-effectiveness vs our active, and has-{sleep, paralysis, any-status, recharge}.
+_OPP_MOVE_DIM = 7
 
 # global = hps(2) + two status one-hots + force_switch + turn + team aggregates(4) + speed(1)
 #          + active volatiles(12): own+opp boosts(8) + own+opp recharge(2) + own+opp sleep(2)
 #          + revealed opponent team: TEAM_SIZE slots x _OPP_MON_DIM (partial-info memory)
-GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12 + TEAM_SIZE * _OPP_MON_DIM
+#          + active opponent's revealed-move threat profile (_OPP_MOVE_DIM)
+GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12 + TEAM_SIZE * _OPP_MON_DIM + _OPP_MOVE_DIM
 # action = move features(7) + switch-target features(3) + fixed-damage(1) + effect features(11):
 #   status one-hot(5) + chance(1) + heals/boosts_self/lowers_foe/recharge/self_destruct(5)
 ACTION_DIM = 7 + 3 + 1 + 11
@@ -85,6 +89,26 @@ def _encode_opp_team(state: BattleState) -> list[float]:
     return feats
 
 
+def _encode_opp_moves(state: BattleState) -> list[float]:
+    """Threat profile of the active opponent's revealed moves (memory). All-zero until the
+    opponent has shown this mon use a move; then the agent can recall e.g. 'this thing has
+    revealed a strong super-effective hit' or 'it carries Sleep'."""
+    rm = state.opponent_revealed_moves
+    if not rm:
+        return [0.0] * _OPP_MOVE_DIM
+    powers = [(a.base_power or 0.0) for a in rm]
+    mults = [(a.type_multiplier if a.type_multiplier is not None else 1.0) for a in rm]
+    return [
+        min(len(rm) / 4.0, 1.0),
+        max(powers) / _MAX_BASE_POWER,
+        min(max(mults) / 4.0, 1.0),  # how super-effectively it has hit us
+        1.0 if any(a.effect_status == "SLP" for a in rm) else 0.0,
+        1.0 if any(a.effect_status == "PAR" for a in rm) else 0.0,
+        1.0 if any(a.effect_status or a.category == "STATUS" for a in rm) else 0.0,
+        1.0 if any(a.recharge for a in rm) else 0.0,
+    ]
+
+
 def encode_global(state: BattleState) -> list[float]:
     """Fixed-length board summary (length ``GLOBAL_DIM``)."""
     our_hp = state.active.hp_fraction if state.active else 0.0
@@ -128,6 +152,7 @@ def encode_global(state: BattleState) -> list[float]:
         our_sleep,
         opp_sleep,
         *_encode_opp_team(state),
+        *_encode_opp_moves(state),
     ]
 
 
