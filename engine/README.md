@@ -35,7 +35,7 @@ the agent's interpreter so the module is importable from that env:
 
 ```sh
 cd engine
-cmake -S . -B build -DPython3_EXECUTABLE=$(cd ../agent && uv run python -c 'import sys; print(sys.executable)')
+cmake -S . -B build -DPython_EXECUTABLE=$(cd ../agent && uv run python -c 'import sys; print(sys.executable)')
 cmake --build build          # builds cinnabar_engine.<...>.so into build/
 cd ../agent && uv run python ../engine/bindings/smoke.py   # random battles in C++, battles/sec
 ```

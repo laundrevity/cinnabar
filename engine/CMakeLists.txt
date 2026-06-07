@@ -22,19 +22,18 @@ add_test(NAME engine_tests COMMAND test_engine)
 # configure time, so no separate install is needed (requires network + git).
 option(BUILD_PYTHON "Build the pybind11 Python module" ON)
 if(BUILD_PYTHON)
-  find_package(Python3 COMPONENTS Interpreter Development.Module)
-  if(Python3_FOUND)
-    include(FetchContent)
-    FetchContent_Declare(
-      pybind11
-      GIT_REPOSITORY https://github.com/pybind/pybind11.git
-      GIT_TAG v2.13.6
-    )
-    FetchContent_MakeAvailable(pybind11)
-    # Module name must match PYBIND11_MODULE(...) in bind.cpp -> `import cinnabar_engine`.
-    pybind11_add_module(cinnabar_engine bindings/bind.cpp src/engine.cpp)
-    target_include_directories(cinnabar_engine PRIVATE include)
-  else()
-    message(WARNING "Python3 dev not found; skipping the pybind11 module.")
-  endif()
+  # Force pybind11 onto the modern FindPython so it honours -DPython_EXECUTABLE.
+  # Without this, pybind11's legacy finder grabs an unrelated system Python (e.g.
+  # /usr/bin/python3.9) and builds an unimportable module for the wrong version.
+  set(PYBIND11_FINDPYTHON ON)
+  include(FetchContent)
+  FetchContent_Declare(
+    pybind11
+    GIT_REPOSITORY https://github.com/pybind/pybind11.git
+    GIT_TAG v2.13.6
+  )
+  FetchContent_MakeAvailable(pybind11)
+  # Module name must match PYBIND11_MODULE(...) in bind.cpp -> `import cinnabar_engine`.
+  pybind11_add_module(cinnabar_engine bindings/bind.cpp src/engine.cpp)
+  target_include_directories(cinnabar_engine PRIVATE include)
 endif()

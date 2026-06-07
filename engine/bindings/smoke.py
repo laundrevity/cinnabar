@@ -1,7 +1,7 @@
 """Smoke test: drive the C++ engine from Python via the pybind11 module.
 
 Build the module first (from engine/):
-    cmake -S . -B build -DPython3_EXECUTABLE=$(cd ../agent && uv run python -c 'import sys;print(sys.executable)')
+    cmake -S . -B build -DPython_EXECUTABLE=$(cd ../agent && uv run python -c 'import sys;print(sys.executable)')
     cmake --build build
 Then run with that same interpreter:
     cd ../agent && uv run python ../engine/bindings/smoke.py
