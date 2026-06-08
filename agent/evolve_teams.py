@@ -31,11 +31,14 @@ from pathlib import Path
 
 import torch
 
-import cinnabar_engine as ce
+# NOTE: importing cinnabar.engine_cpp first is what puts engine/build on sys.path, so
+# `import cinnabar_engine` must come after it (same ordering ladder.py relies on).
 from cinnabar import movesets
 from cinnabar.engine_cpp import StaticData, play_battle
 from cinnabar.policy import SmartHeuristicPolicy
 from ladder import _load_net
+
+import cinnabar_engine as ce  # noqa: E402  (only importable after engine_cpp sets the path)
 
 Team = list  # [(species, [moves]), ...]
 
