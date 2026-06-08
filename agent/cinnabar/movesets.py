@@ -77,3 +77,23 @@ def sample_team(roster: list[str], rng: _random.Random = _random) -> list[tuple[
 def rosters_from_teams(teams) -> list[list[str]]:
     """Extract the species rosters (composition only) from loaded engine TeamSpecs."""
     return [[sp for sp, _ in t] for t in teams]
+
+
+# Scale-up: generate a whole team from the metagame instead of a fixed roster. The "big four"
+# (Tauros / Snorlax / Chansey / Starmie) anchor almost every real RBY OU team, so weight them up
+# for realism while still drawing the rest from the full viable pool for maximum variety.
+ALL_SPECIES = list(SPECIES_MOVEPOOLS.keys())
+BIG_FOUR = ["Tauros", "Snorlax", "Chansey", "Starmie"]
+
+
+def generate_team(rng: _random.Random = _random, size: int = 6) -> list[tuple[str, list[str]]]:
+    """A fresh engine TeamSpec: `size` distinct species sampled from the whole pool (big-four
+    weighted), each with a randomly sampled moveset. The scale-up environment."""
+    pool = list(ALL_SPECIES)
+    chosen: list[str] = []
+    for _ in range(min(size, len(pool))):
+        weights = [3.0 if sp in BIG_FOUR else 1.0 for sp in pool]
+        pick = rng.choices(pool, weights=weights, k=1)[0]
+        chosen.append(pick)
+        pool.remove(pick)
+    return sample_team(chosen, rng)

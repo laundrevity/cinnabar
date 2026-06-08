@@ -88,6 +88,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--frame-stack", type=int, default=1,
                    help="stack the last K turns' global observations (1 = off); a cheap recent-history "
                         "probe before a full recurrent net. Net global dim becomes GLOBAL_DIM*K.")
+    p.add_argument("--gen-teams", action="store_true",
+                   help="generate a fresh team from the whole metagame per battle (any 6 viable-OU "
+                        "species + sampled movesets) instead of the fixed pool. The scale-up environment.")
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-battles", type=int, default=200)
     p.add_argument("--ckpt-every", type=int, default=25)
@@ -317,7 +320,11 @@ def main() -> None:
     if loaded:
         TEAMS = loaded
     print(f"teams: {len(TEAMS)} ({'from ' + args.teams_dir if loaded else 'fallback'})")
-    if args.random_movesets:
+    if args.gen_teams:
+        from cinnabar import movesets
+        _PICK_TEAM = movesets.generate_team  # whole-metagame team generation (scale-up)
+        print(f"gen-teams: ON ({len(movesets.ALL_SPECIES)} species, big-four weighted)")
+    elif args.random_movesets:
         from cinnabar import movesets
         rosters = movesets.rosters_from_teams(TEAMS)
         _PICK_TEAM = lambda: movesets.sample_team(random.choice(rosters))  # noqa: E731

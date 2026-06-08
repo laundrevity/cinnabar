@@ -109,6 +109,8 @@ def main() -> None:
     ap.add_argument("--mirror", action="store_true", help="same team both sides (isolate skill)")
     ap.add_argument("--random-movesets", action="store_true",
                     help="re-sample movesets per battle (match training; cinnabar/movesets.py)")
+    ap.add_argument("--gen-teams", action="store_true",
+                    help="generate whole teams from the metagame per battle (match --gen-teams training)")
     ap.add_argument("--frame-stack", type=int, default=1, help="stack last K turns' globals (match training)")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
@@ -119,7 +121,10 @@ def main() -> None:
     static = StaticData(1)
     teams = load_teams(a.teams_dir) or T._FALLBACK_TEAMS
     pick_team = None
-    if a.random_movesets:
+    if a.gen_teams:
+        from cinnabar import movesets
+        pick_team = movesets.generate_team  # whole-metagame teams (scale-up)
+    elif a.random_movesets:
         from cinnabar import movesets
         rosters = movesets.rosters_from_teams(teams)
         pick_team = lambda: movesets.sample_team(random.choice(rosters))  # noqa: E731
