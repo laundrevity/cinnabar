@@ -160,10 +160,12 @@ def encode_global(state: BattleState) -> list[float]:
         opp_recharge,
         our_sleep,
         opp_sleep,
-        *_vol(state.active),
-        *_vol(state.opponent_active),
         *_encode_opp_team(state),
         *_encode_opp_moves(state),
+        # New volatiles appended LAST so older feature indices are stable — lets an old checkpoint
+        # warm-start by zero-padding these 12 columns (see agent/pad_checkpoint.py).
+        *_vol(state.active),
+        *_vol(state.opponent_active),
     ]
 
 
