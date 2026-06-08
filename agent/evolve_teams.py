@@ -47,38 +47,11 @@ Team = list  # [(species, [moves]), ...]
 
 # ----------------------------------------------------------------------------- genome operators
 def random_team(rng: random.Random) -> Team:
-    return _cap_sleepers([(sp, list(mv)) for sp, mv in movesets.generate_team(rng)], rng)
+    return [(sp, list(mv)) for sp, mv in movesets.generate_team(rng)]
 
 
 def _legal_moveset(sp: str, mv: list[str]) -> bool:
     return sum(1 for m in mv if m not in movesets.STATUS_MOVES) >= 2  # keep >=2 attacks
-
-
-# Sleep-inducing moves the engine models. Under Sleep Clause only one foe can be asleep at a time,
-# so a second sleeper's sleep move is dead weight — real teams run exactly one. MAX_SLEEPERS caps it
-# (set from --max-sleepers in main); _cap_sleepers strips the surplus after every genome operation.
-SLEEP_MOVES = {"Sleep Powder", "Lovely Kiss", "Hypnosis", "Sing"}
-MAX_SLEEPERS = 1
-
-
-def _cap_sleepers(team: Team, rng: random.Random, cap: int | None = None) -> Team:
-    """Keep at most `cap` mons carrying a sleep move; swap the surplus sleep moves for non-sleep
-    options from the same movepool (Sleep-Clause-aware team building)."""
-    cap = MAX_SLEEPERS if cap is None else cap
-    seen = 0
-    for i, (sp, mv) in enumerate(team):
-        if not any(m in SLEEP_MOVES for m in mv):
-            continue
-        seen += 1
-        if seen <= cap:
-            continue
-        mv = list(mv)
-        pool = [m for m in movesets.SPECIES_MOVEPOOLS.get(sp, []) if m not in mv and m not in SLEEP_MOVES]
-        for j, m in enumerate(mv):
-            if m in SLEEP_MOVES and pool:
-                mv[j] = pool.pop(rng.randrange(len(pool)))
-        team[i] = (sp, mv)
-    return team
 
 
 def mutate(team: Team, rng: random.Random) -> Team:
@@ -104,7 +77,7 @@ def mutate(team: Team, rng: random.Random) -> Team:
             mv[rng.randrange(len(mv))] = rng.choice(options)
             if _legal_moveset(sp0, mv):
                 t[i] = (sp0, mv)
-    return _cap_sleepers(t, rng)
+    return t
 
 
 def crossover(a: Team, b: Team, rng: random.Random) -> Team:
@@ -123,7 +96,7 @@ def crossover(a: Team, b: Team, rng: random.Random) -> Team:
         sp = rng.choice([s for s in movesets.ALL_SPECIES if s not in used])
         child.append((sp, movesets.sample_moveset(sp, rng)))
         used.add(sp)
-    return _cap_sleepers(child, rng)
+    return child
 
 
 def to_showdown(team: Team) -> str:
@@ -181,8 +154,6 @@ def main() -> None:
     ap.add_argument("--no-seed-anchor", dest="seed_anchor", action="store_false",
                     help="start from random teams instead of seeding the population with the anchor teams")
     ap.add_argument("--agg", choices=["mean", "min"], default="mean", help="aggregate panel pilots")
-    ap.add_argument("--max-sleepers", type=int, default=1,
-                    help="cap sleep-move carriers per team (Sleep Clause: a 2nd sleeper is dead weight)")
     ap.add_argument("--pop", type=int, default=24, help="population size")
     ap.add_argument("--gens", type=int, default=30, help="generations")
     ap.add_argument("--games", type=int, default=10, help="anchor battles per team per pilot per gen")
@@ -203,9 +174,6 @@ def main() -> None:
     rng = random.Random(a.seed)
     static = StaticData(1)
 
-    global MAX_SLEEPERS
-    MAX_SLEEPERS = a.max_sleepers
-
     pilots = []
     for nm in [s.strip() for s in a.pilots.split(",") if s.strip()]:
         if nm == "net":
@@ -225,7 +193,7 @@ def main() -> None:
 
     pop: list[Team] = []
     if a.seed_anchor:
-        pop = [_cap_sleepers([(sp, list(mv)) for sp, mv in t], rng) for t in anchor][:a.pop]
+        pop = [[(sp, list(mv)) for sp, mv in t] for t in anchor][:a.pop]
     while len(pop) < a.pop:
         pop.append(random_team(rng))
 
