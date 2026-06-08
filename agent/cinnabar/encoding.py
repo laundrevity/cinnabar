@@ -34,9 +34,10 @@ _OPP_MOVE_DIM = 7
 
 # global = hps(2) + two status one-hots + force_switch + turn + team aggregates(4) + speed(1)
 #          + active volatiles(12): own+opp boosts(8) + own+opp recharge(2) + own+opp sleep(2)
+#          + extra volatiles(12): own+opp {confused, reflect, light_screen, leech_seeded, disabled, toxic}
 #          + revealed opponent team: TEAM_SIZE slots x _OPP_MON_DIM (partial-info memory)
 #          + active opponent's revealed-move threat profile (_OPP_MOVE_DIM)
-GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12 + TEAM_SIZE * _OPP_MON_DIM + _OPP_MOVE_DIM
+GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12 + 12 + TEAM_SIZE * _OPP_MON_DIM + _OPP_MOVE_DIM
 # action = move features(7) + switch-target features(3) + fixed-damage(1) + effect features(11):
 #   status one-hot(5) + chance(1) + heals/boosts_self/lowers_foe/recharge/self_destruct(5)
 ACTION_DIM = 7 + 3 + 1 + 11
@@ -133,6 +134,14 @@ def encode_global(state: BattleState) -> list[float]:
     our_sleep = (state.active.sleep_turns / 7.0) if state.active else 0.0
     opp_sleep = (state.opponent_active.sleep_turns / 7.0) if state.opponent_active else 0.0
 
+    # Volatiles the agent was previously blind to: confusion, both screens, Leech Seed, a Disabled
+    # slot, and badly-poisoned (toxic, distinct from regular poison). 6 bools per side.
+    def _vol(mon) -> list[float]:
+        if not mon:
+            return [0.0] * 6
+        return [float(mon.confused), float(mon.reflect), float(mon.light_screen),
+                float(mon.leech_seeded), float(mon.disabled), float(mon.toxic)]
+
     return [
         our_hp,
         opp_hp,
@@ -151,6 +160,8 @@ def encode_global(state: BattleState) -> list[float]:
         opp_recharge,
         our_sleep,
         opp_sleep,
+        *_vol(state.active),
+        *_vol(state.opponent_active),
         *_encode_opp_team(state),
         *_encode_opp_moves(state),
     ]

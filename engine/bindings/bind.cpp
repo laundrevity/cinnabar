@@ -102,6 +102,13 @@ PYBIND11_MODULE(cinnabar_engine, m) {
         .def("active_sleep_turns", [](const Battle& b, int player) {
             const Pokemon& m = (player == 0 ? b.p1 : b.p2).mon();
             return m.status == Status::Sleep ? m.sleep_turns : 0;
+        }, py::arg("player"))
+        // More volatiles for the RL observation: (confused, reflect, light_screen, leech_seeded,
+        // disabled, toxic, tox_stage). Lets the agent perceive mechanics it otherwise can't see.
+        .def("active_volatiles", [](const Battle& b, int player) {
+            const Pokemon& m = (player == 0 ? b.p1 : b.p2).mon();
+            return py::make_tuple(m.confuse_turns > 0, m.reflect, m.light_screen, m.leech_seeded,
+                                  m.disable_turns > 0, m.toxic, m.tox_stage);
         }, py::arg("player"));
 
     // team1/team2 are list[tuple[str species, list[str] moves]].

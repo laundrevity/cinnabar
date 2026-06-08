@@ -143,11 +143,14 @@ def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str
         e = next((x for x in entries if x[4]), None)
         if e is None:
             return None
+        conf, refl, lscr, seed, disa, tox, tstage = battle.active_volatiles(p)
         return ActivePokemon(species=e[0], hp_fraction=e[1], status=(e[2] or None),
                              types=static.species_types(e[0]), speed=static.species_speed(e[0]),
                              boosts=tuple(battle.active_boosts(p)),
                              must_recharge=battle.active_must_recharge(p),
-                             sleep_turns=battle.active_sleep_turns(p))
+                             sleep_turns=battle.active_sleep_turns(p),
+                             confused=conf, reflect=refl, light_screen=lscr, leech_seeded=seed,
+                             disabled=disa, toxic=tox, tox_stage=tstage)
 
     opp_entry = next((x for x in ots if x[4]), None)
     opp_types = static.species_types(opp_entry[0]) if opp_entry else ()

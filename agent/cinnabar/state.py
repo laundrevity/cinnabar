@@ -72,6 +72,13 @@ class ActivePokemon:
     boosts: tuple[int, ...] = (0, 0, 0, 0)  # stat stages atk/def/spc/spe (-6..+6)
     must_recharge: bool = False             # owes a Hyper Beam recharge turn (a free turn for the foe)
     sleep_turns: int = 0                    # remaining forced-sleep turns (0 if awake)
+    confused: bool = False                  # confusion volatile (50% self-hit risk each turn)
+    reflect: bool = False                   # Reflect screen up (halves physical damage taken)
+    light_screen: bool = False              # Light Screen up (halves special damage taken)
+    leech_seeded: bool = False              # Leech Seed draining this mon each turn
+    disabled: bool = False                  # one of this mon's move slots is Disabled
+    toxic: bool = False                     # badly poisoned (escalating) vs regular poison
+    tox_stage: int = 0                      # toxic counter (residual = stage * floor(maxhp/16))
 
 
 @dataclass
