@@ -114,6 +114,7 @@ def main() -> None:
     a = ap.parse_args()
     random.seed(a.seed)
     torch.manual_seed(a.seed)
+    T._K = max(1, a.frame_stack)  # _pad reads train_engine._K for frame-stacking; set it here too
 
     static = StaticData(1)
     teams = load_teams(a.teams_dir) or T._FALLBACK_TEAMS
