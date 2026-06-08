@@ -24,7 +24,7 @@ from pathlib import Path
 
 import torch
 
-from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM, TEAM_SIZE, featurize
+from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM, TEAM_SIZE, featurize, stack_global
 from cinnabar.engine_cpp import (  # inserts engine/build on sys.path
     Reveal, StaticData, build_state, final_material, load_teams, reveal_move)
 import cinnabar_engine as ce  # noqa: E402
@@ -52,6 +52,7 @@ TEAMS = _FALLBACK_TEAMS  # set from --teams-dir in main() if any teams load
 # Per-battle team source: returns one engine TeamSpec. Default picks a fixed team from the pool;
 # --random-movesets swaps in the moveset sampler (set in main()).
 _PICK_TEAM = lambda: random.choice(TEAMS)  # noqa: E731
+_K = 1  # frame-stack depth (1 = off); set from --frame-stack in main(). Net global dim = GLOBAL_DIM*_K.
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,6 +85,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--random-movesets", action="store_true",
                    help="re-sample each species' moves per battle (keeps the pool's rosters); makes "
                         "moveset hidden info real and forces generalization (cinnabar/movesets.py)")
+    p.add_argument("--frame-stack", type=int, default=1,
+                   help="stack the last K turns' global observations (1 = off); a cheap recent-history "
+                        "probe before a full recurrent net. Net global dim becomes GLOBAL_DIM*K.")
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-battles", type=int, default=200)
     p.add_argument("--ckpt-every", type=int, default=25)
@@ -101,9 +105,15 @@ def parse_args() -> argparse.Namespace:
 
 # ----- batched featurization / action selection --------------------------------------------
 
-def _pad(states, device):
-    """Featurize a list of states into padded tensors. Returns (glob, act, mask, feats)."""
-    feats = [featurize(s) for s in states]
+def _pad(states, device, histories=None):
+    """Featurize a list of states into padded tensors. Returns (glob, act, mask, feats).
+    With frame-stacking (_K>1) and per-state `histories`, the global is the last _K globals
+    concatenated (histories are updated in place); the stacked global is what gets stored."""
+    raw = [featurize(s) for s in states]
+    if _K > 1 and histories is not None:
+        feats = [(stack_global(histories[i], g, _K), af) for i, (g, af) in enumerate(raw)]
+    else:
+        feats = raw
     b = len(feats)
     g_dim = len(feats[0][0])
     a_dim = len(feats[0][1][0])
@@ -119,10 +129,10 @@ def _pad(states, device):
     return glob.to(device), act.to(device), mask.to(device), feats
 
 
-def select_batch(net, states, device, *, sample, record_buf=None, tags=None) -> list[int]:
+def select_batch(net, states, device, *, sample, record_buf=None, tags=None, histories=None) -> list[int]:
     """Choose an action for every state in one forward. Returns chosen indices (into each
     state's available_actions). If record_buf is given, append a StepRecord per state."""
-    glob, act, mask, feats = _pad(states, device)
+    glob, act, mask, feats = _pad(states, device, histories)
     with torch.no_grad():
         logits = net.score_actions_batch(glob, act, mask)
         logp_all = torch.log_softmax(logits, dim=1)
@@ -141,9 +151,9 @@ def select_batch(net, states, device, *, sample, record_buf=None, tags=None) -> 
     return chosen_l
 
 
-def _select_opp(opp, states, device) -> list[int]:
+def _select_opp(opp, states, device, histories=None) -> list[int]:
     if isinstance(opp, ActionScorer):
-        return select_batch(opp, states, device, sample=True)
+        return select_batch(opp, states, device, sample=True, histories=histories)
     return [opp.select_action(s).index for s in states]  # RandomPolicy / MaxDamagePolicy
 
 
@@ -230,7 +240,8 @@ def _make_battles(n, base):
         s2 = [(s, list(m)) for s, m in t2]
         # r1/r2: persistent per-battle reveal sets (partial info + the agent's revealed-team memory).
         items.append({"b": ce.make_battle(s1, s2, base + i), "s1": s1, "s2": s2,
-                      "tag": f"{base}_{i}", "r1": Reveal(), "r2": Reveal()})
+                      "tag": f"{base}_{i}", "r1": Reveal(), "r2": Reveal(),
+                      "h0": [], "h1": []})  # per-side global-frame history (frame-stacking)
     return items
 
 
@@ -248,8 +259,9 @@ def _run(items, net, opp, args, *, record_buf, greedy_learner=False):
         st2 = [build_state(it["b"], 1, it["s2"], _STATIC, it["tag"], reveal=it["r2"], opp_team=it["s1"])
                for it in live]
         a1 = select_batch(net, st1, args.device, sample=not greedy_learner,
-                          record_buf=record_buf, tags=[it["tag"] for it in live] if record_buf is not None else None)
-        a2 = _select_opp(opp, st2, args.device)
+                          record_buf=record_buf, tags=[it["tag"] for it in live] if record_buf is not None else None,
+                          histories=[it["h0"] for it in live])
+        a2 = _select_opp(opp, st2, args.device, histories=[it["h1"] for it in live])
         for j, it in enumerate(live):
             reveal_move(it["r1"], st2[j], st2[j].available_actions[a2[j]])  # p0 sees p1's move
             reveal_move(it["r2"], st1[j], st1[j].available_actions[a1[j]])  # p1 sees p0's move
@@ -285,7 +297,7 @@ def eval_winrate(net, opp, args, n, base) -> float:
 
 def _snapshot(net, args):
     """A frozen copy of the learner network (a self-play / league opponent)."""
-    s = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
+    s = ActionScorer(GLOBAL_DIM * _K, ACTION_DIM, args.hidden).to(args.device)
     s.load_state_dict(net.state_dict())
     for p in s.parameters():
         p.requires_grad_(False)
@@ -296,7 +308,10 @@ def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     random.seed(args.seed)
-    global _STATIC, TEAMS, _PICK_TEAM
+    global _STATIC, TEAMS, _PICK_TEAM, _K
+    _K = max(1, args.frame_stack)
+    if _K > 1:
+        print(f"frame-stack: {_K} (net global dim = {GLOBAL_DIM} x {_K} = {GLOBAL_DIM * _K})")
     _STATIC = StaticData(1)  # poke-env static data used by build_state
     loaded = load_teams(args.teams_dir)
     if loaded:
@@ -308,7 +323,7 @@ def main() -> None:
         _PICK_TEAM = lambda: movesets.sample_team(random.choice(rosters))  # noqa: E731
         print(f"random movesets: ON ({len(rosters)} rosters, per-species movepools)")
 
-    net = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
+    net = ActionScorer(GLOBAL_DIM * _K, ACTION_DIM, args.hidden).to(args.device)
     if args.init:
         net.load_state_dict(torch.load(args.init, map_location=args.device))
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)

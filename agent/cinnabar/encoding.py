@@ -224,3 +224,18 @@ def encode_action(action: Action, state: BattleState) -> list[float]:
 def featurize(state: BattleState) -> tuple[list[float], list[list[float]]]:
     """Returns (global_vector, [per-action vectors]) for the current turn."""
     return encode_global(state), [encode_action(a, state) for a in state.available_actions]
+
+
+def stack_global(history: list[list[float]], current: list[float], k: int) -> list[float]:
+    """Frame-stack probe: return the k most recent global vectors concatenated (oldest first,
+    zero-padded at the front on early turns), then record `current` for next turn. `history`
+    holds the previous k-1 globals and is mutated in place. k=1 is a no-op (returns `current`)."""
+    if k <= 1:
+        return current
+    frames = history[-(k - 1):] + [current]
+    flat = [0.0] * (len(current) * (k - len(frames)))  # front-pad when fewer than k turns seen
+    for fr in frames:
+        flat.extend(fr)
+    history.append(current)
+    del history[:-(k - 1)]  # keep only the previous k-1 for next turn
+    return flat

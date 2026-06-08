@@ -33,21 +33,29 @@ from cinnabar.state import BattleState
 
 
 class NetPolicy(Policy):
-    """Wrap a trained ActionScorer as a greedy Policy (argmax over legal actions)."""
+    """Wrap a trained ActionScorer as a greedy Policy (argmax over legal actions). With frame-stack
+    (k>1) it keeps a per-battle global history, reset when the battle tag changes."""
 
-    def __init__(self, net, device: str = "cpu") -> None:
-        self.net, self.device = net, device
+    def __init__(self, net, device: str = "cpu", k: int = 1) -> None:
+        self.net, self.device, self.k = net, device, k
+        self._hist: list[list[float]] = []
+        self._tag = None
 
     def select_action(self, state: BattleState):
-        idx = T.select_batch(self.net, [state], self.device, sample=False)[0]
+        if self.k > 1:
+            if state.battle_tag != self._tag:   # new battle -> fresh history
+                self._hist, self._tag = [], state.battle_tag
+            idx = T.select_batch(self.net, [state], self.device, sample=False, histories=[self._hist])[0]
+        else:
+            idx = T.select_batch(self.net, [state], self.device, sample=False)[0]
         return state.available_actions[idx]
 
 
-def _load_net(path: str, hidden: int, device: str) -> NetPolicy:
-    net = ActionScorer(GLOBAL_DIM, ACTION_DIM, hidden).to(device)
+def _load_net(path: str, hidden: int, device: str, k: int = 1) -> NetPolicy:
+    net = ActionScorer(GLOBAL_DIM * k, ACTION_DIM, hidden).to(device)
     net.load_state_dict(torch.load(path, map_location=device))
     net.eval()
-    return NetPolicy(net, device)
+    return NetPolicy(net, device, k)
 
 
 def _play(p1, p2, teams, n, base, mirror, static, turn_limit, pick_team=None):
@@ -101,6 +109,7 @@ def main() -> None:
     ap.add_argument("--mirror", action="store_true", help="same team both sides (isolate skill)")
     ap.add_argument("--random-movesets", action="store_true",
                     help="re-sample movesets per battle (match training; cinnabar/movesets.py)")
+    ap.add_argument("--frame-stack", type=int, default=1, help="stack last K turns' globals (match training)")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     random.seed(a.seed)
@@ -118,7 +127,8 @@ def main() -> None:
         ("random", RandomPolicy()), ("maxdamage", MaxDamagePolicy()), ("smart", SmartHeuristicPolicy()),
     ]
     for c in a.ckpts:
-        players.append((Path(c).parent.name + "/" + Path(c).stem, _load_net(c, a.hidden, a.device)))
+        players.append((Path(c).parent.name + "/" + Path(c).stem,
+                        _load_net(c, a.hidden, a.device, max(1, a.frame_stack))))
 
     names = [n for n, _ in players]
     k = len(players)
