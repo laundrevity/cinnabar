@@ -1,0 +1,35 @@
+Cloyster
+- Clamp
+- Blizzard
+- Hyper Beam
+- Explosion
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
+
+Snorlax
+- Body Slam
+- Earthquake
+- Hyper Beam
+- Self-Destruct
+
+Chansey (F)
+- Ice Beam
+- Thunderbolt
+- Thunder Wave
+- Soft-Boiled
+
+Starmie
+- Psychic
+- Blizzard
+- Thunderbolt
+- Recover
+
+Alakazam
+- Psychic
+- Seismic Toss
+- Thunder Wave
+- Recover

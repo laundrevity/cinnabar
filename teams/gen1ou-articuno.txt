@@ -1,0 +1,35 @@
+Articuno
+- Blizzard
+- Ice Beam
+- Agility
+- Rest
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
+
+Snorlax
+- Body Slam
+- Earthquake
+- Hyper Beam
+- Self-Destruct
+
+Chansey (F)
+- Ice Beam
+- Thunderbolt
+- Thunder Wave
+- Soft-Boiled
+
+Zapdos
+- Thunderbolt
+- Drill Peck
+- Thunder Wave
+- Agility
+
+Starmie
+- Psychic
+- Blizzard
+- Thunderbolt
+- Recover

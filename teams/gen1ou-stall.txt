@@ -1,0 +1,35 @@
+Chansey (F)
+- Ice Beam
+- Thunder Wave
+- Toxic
+- Soft-Boiled
+
+Snorlax
+- Body Slam
+- Reflect
+- Rest
+- Ice Beam
+
+Starmie
+- Surf
+- Thunder Wave
+- Recover
+- Blizzard
+
+Exeggutor
+- Psychic
+- Leech Seed
+- Sleep Powder
+- Explosion
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
+
+Rhydon
+- Earthquake
+- Rock Slide
+- Body Slam
+- Substitute

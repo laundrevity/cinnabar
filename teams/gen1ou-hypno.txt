@@ -1,0 +1,35 @@
+Hypno
+- Hypnosis
+- Psychic
+- Thunder Wave
+- Rest
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
+
+Snorlax
+- Body Slam
+- Earthquake
+- Hyper Beam
+- Self-Destruct
+
+Chansey (F)
+- Ice Beam
+- Seismic Toss
+- Thunder Wave
+- Soft-Boiled
+
+Starmie
+- Psychic
+- Blizzard
+- Thunderbolt
+- Recover
+
+Golem
+- Earthquake
+- Rock Slide
+- Body Slam
+- Explosion

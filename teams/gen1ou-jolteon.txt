@@ -1,0 +1,35 @@
+Jolteon
+- Thunderbolt
+- Thunder Wave
+- Pin Missile
+- Double Kick
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
+
+Snorlax
+- Body Slam
+- Earthquake
+- Hyper Beam
+- Self-Destruct
+
+Chansey (F)
+- Ice Beam
+- Thunderbolt
+- Thunder Wave
+- Soft-Boiled
+
+Rhydon
+- Earthquake
+- Rock Slide
+- Body Slam
+- Substitute
+
+Lapras
+- Blizzard
+- Thunderbolt
+- Body Slam
+- Sing

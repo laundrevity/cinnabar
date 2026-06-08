@@ -1,0 +1,35 @@
+Moltres
+- Fire Blast
+- Hyper Beam
+- Agility
+- Fire Spin
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
+
+Snorlax
+- Body Slam
+- Earthquake
+- Hyper Beam
+- Self-Destruct
+
+Chansey (F)
+- Ice Beam
+- Thunderbolt
+- Thunder Wave
+- Soft-Boiled
+
+Starmie
+- Surf
+- Blizzard
+- Thunderbolt
+- Recover
+
+Rhydon
+- Earthquake
+- Rock Slide
+- Body Slam
+- Substitute

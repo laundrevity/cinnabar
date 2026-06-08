@@ -1,0 +1,35 @@
+Dragonite
+- Wrap
+- Blizzard
+- Thunderbolt
+- Agility
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
+
+Snorlax
+- Body Slam
+- Earthquake
+- Hyper Beam
+- Self-Destruct
+
+Chansey (F)
+- Ice Beam
+- Thunderbolt
+- Thunder Wave
+- Soft-Boiled
+
+Starmie
+- Thunderbolt
+- Ice Beam
+- Recover
+- Thunder Wave
+
+Exeggutor
+- Psychic
+- Sleep Powder
+- Mega Drain
+- Explosion

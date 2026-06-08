@@ -1,0 +1,35 @@
+Slowbro
+- Amnesia
+- Surf
+- Thunder Wave
+- Rest
+
+Chansey (F)
+- Ice Beam
+- Thunderbolt
+- Thunder Wave
+- Soft-Boiled
+
+Snorlax
+- Body Slam
+- Reflect
+- Rest
+- Ice Beam
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
+
+Starmie
+- Surf
+- Blizzard
+- Thunder Wave
+- Recover
+
+Rhydon
+- Earthquake
+- Rock Slide
+- Body Slam
+- Substitute
