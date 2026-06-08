@@ -4,12 +4,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <unordered_map>
 
-#ifdef CINNABAR_DEBUG
-#include <cstdio>
-#endif
+// Set CINNABAR_RNG=1 to dump every PRNG draw to stderr (for diffing the RNG stream vs Showdown).
+static const bool RNG_DEBUG = std::getenv("CINNABAR_RNG") != nullptr;
 
 namespace cinnabar {
 
@@ -110,16 +111,12 @@ uint32_t RNG::next() {
 }
 int RNG::random(int n) {
     int r = static_cast<int>((static_cast<uint64_t>(next()) * static_cast<uint64_t>(n)) >> 32);
-#ifdef CINNABAR_DEBUG
-    std::fprintf(stderr, "  ourrng random(%d) = %d\n", n, r);
-#endif
+    if (RNG_DEBUG) std::fprintf(stderr, "  ourrng random(%d) = %d\n", n, r);
     return r;
 }
 int RNG::random(int from, int to) {
     int r = static_cast<int>((static_cast<uint64_t>(next()) * static_cast<uint64_t>(to - from)) >> 32) + from;
-#ifdef CINNABAR_DEBUG
-    std::fprintf(stderr, "  ourrng random(%d,%d) = %d\n", from, to, r);
-#endif
+    if (RNG_DEBUG) std::fprintf(stderr, "  ourrng random(%d,%d) = %d\n", from, to, r);
     return r;
 }
 int RNG::range(int lo, int hi) { return random(lo, hi + 1); }
@@ -625,6 +622,10 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
 
 void try_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
     if (as.mon().fainted()) return;
+    // If the foe already fainted earlier this turn (e.g. it KO'd itself on Struggle/recoil before
+    // this — the slower — mon moved), Gen 1 cancels this move entirely: no accuracy roll, no RNG, no
+    // can_act check. The fainted side switches at end of turn, so the move never resolves.
+    if (ds.mon().fainted()) return;
     if (!can_act(as.mon(), rng)) return;  // sleep/freeze/recharge/full-para/confusion self-hit
     use_move(as, ds, moveidx, rng, last_damage);
 }
