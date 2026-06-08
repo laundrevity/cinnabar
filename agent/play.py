@@ -51,7 +51,7 @@ async def main() -> None:
     parser.add_argument("--format", default="gen1ou", dest="battle_format")
     parser.add_argument("--checkpoint", default=None,
                         help="PG checkpoint to play (default: random bot)")
-    parser.add_argument("--hidden", type=int, default=64, help="must match the trained net")
+    parser.add_argument("--hidden", type=int, default=128, help="must match the trained net (current nets: 128)")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--teams-dir", default=str(TEAMS_DIR), help="dir of team .txt files (random per battle)")
     args = parser.parse_args()

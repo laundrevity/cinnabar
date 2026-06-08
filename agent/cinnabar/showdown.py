@@ -23,6 +23,13 @@ class PolicyPlayer(Player):
         super().__init__(*args, **kwargs)
         self._policy = policy
         self._type_charts: dict = {}  # gen -> type chart, lazily cached
+        # Move-effect metadata (status/heal/boost/recharge facts) so a trained net sees the same
+        # action features it trained on — without these every 0-power status move looks identical.
+        try:
+            from .engine_cpp import StaticData
+            self._static = StaticData(1)
+        except Exception:
+            self._static = None  # random bot / engine not built: degrade to no effect features
 
     def choose_move(self, battle):
         state, targets = self._build_state(battle)
@@ -42,6 +49,7 @@ class PolicyPlayer(Player):
         targets: list = []
 
         for move in battle.available_moves:
+            mm = self._static.move_meta(move.id) if self._static else None
             actions.append(
                 Action(
                     index=len(actions),
@@ -54,6 +62,14 @@ class PolicyPlayer(Player):
                     accuracy=move.accuracy,
                     type_multiplier=self._type_multiplier(battle, move),
                     fixed_damage=self._fixed_damage(move),
+                    # Move-effect features — match the trained net's action observation.
+                    effect_status=(mm["effect_status"] if mm else ""),
+                    effect_chance=(mm["effect_chance"] if mm else 0.0),
+                    heals=(mm["heals"] if mm else False),
+                    boosts_self=(mm["boosts_self"] if mm else False),
+                    lowers_foe=(mm["lowers_foe"] if mm else False),
+                    recharge=(mm["recharge"] if mm else False),
+                    self_destruct=(mm["self_destruct"] if mm else False),
                 )
             )
             targets.append(move)
@@ -88,12 +104,17 @@ class PolicyPlayer(Player):
     def _mon_view(mon) -> ActivePokemon | None:
         if mon is None:
             return None
+        boosts = getattr(mon, "boosts", None) or {}
+        st = mon.status.name if mon.status else None  # SLP/PSN/BRN/FRZ/PAR/TOX
         return ActivePokemon(
             species=mon.species,
             hp_fraction=mon.current_hp_fraction,
-            status=mon.status.name if mon.status else None,
+            # Training encodes toxic as PSN one-hot + a toxic flag, so mirror that here.
+            status=("PSN" if st == "TOX" else st),
             types=tuple(t.name for t in mon.types if t is not None),
             speed=(getattr(mon, "base_stats", None) or {}).get("spe"),
+            boosts=(boosts.get("atk", 0), boosts.get("def", 0), boosts.get("spa", 0), boosts.get("spe", 0)),
+            toxic=(st == "TOX"),
         )
 
     def _chart(self, battle):
