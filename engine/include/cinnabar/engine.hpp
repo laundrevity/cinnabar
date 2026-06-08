@@ -29,7 +29,8 @@ enum class Result { Ongoing, P1Win, P2Win, Tie };
 
 // Primary or secondary move effect.
 enum class Effect { None, Paralyze, Sleep, Freeze, Burn, Poison, Heal, Rest, Reflect, SelfDestruct,
-                    Substitute, Confuse, Counter, Trap };
+                    Substitute, Confuse, Counter, Trap, SuperFang, Psywave, LightScreen, LeechSeed,
+                    Toxic, Disable };
 
 double type_effectiveness(Type attacking, Type defending);  // Gen 1 (provisional)
 
@@ -65,6 +66,10 @@ struct MoveData {
     bool ignore_immunity = false;        // skip the type-immunity check (Confuse Ray, Glare, ...)
     int priority = 0;                    // turn-order bracket; Counter is -5 (moves last)
     bool skip_lastdamage = false;        // does NOT reset the battle's last_damage (Counter, status)
+    int drain_num = 0, drain_den = 0;    // drain heal to the user = floor(damage * num/den), min 1 (Mega Drain)
+    bool needs_sleep_target = false;     // Dream Eater: fails (before accuracy) unless the target is asleep
+    int multihit_min = 0, multihit_max = 0;  // multi-hit count range (0 = single hit); (2,5) = the
+                                             // gen1 sample distribution, min==max = a fixed count (Double Kick)
 };
 
 struct Pokemon {
@@ -76,7 +81,13 @@ struct Pokemon {
     int boost_atk = 0, boost_def = 0, boost_spc = 0, boost_spe = 0;  // stages, -6..+6
     Status status = Status::None;
     int sleep_turns = 0;
-    bool reflect = false;        // volatile: Reflect screen, cleared on switch out
+    bool toxic = false;   // badly poisoned (Toxic): reports 'tox' and deals escalating residual damage
+    int tox_stage = 0;    // toxic counter; residual = tox_stage * floor(maxhp/16), +1 per turn; resets on switch
+    bool reflect = false;        // volatile: Reflect screen (doubles Def), cleared on switch out
+    bool light_screen = false;   // volatile: Light Screen (doubles Spc def), cleared on switch out
+    bool leech_seeded = false;   // volatile: Leech Seed drains 1/16 max HP after this mon's move; cleared on switch
+    int disable_slot = -1;       // Disable: the move slot that's disabled (-1 = none); cleared on switch
+    int disable_turns = 0;       // Disable: turns the slot stays disabled (1-8); ticks down each of this mon's moves
     bool must_recharge = false;  // volatile: owes a Hyper Beam recharge turn; cleared on switch
     bool has_substitute = false; // volatile: a Substitute is up, absorbing damage; cleared on switch
     int sub_hp = 0;              // remaining Substitute HP (floor(maxhp/4)+1 when created)

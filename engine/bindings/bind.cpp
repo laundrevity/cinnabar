@@ -64,10 +64,11 @@ PYBIND11_MODULE(cinnabar_engine, m) {
             return (player == 0 ? b.p1 : b.p2).mon().max_hp;
         }, py::arg("player"))
         .def("active_status", [](const Battle& b, int player) {
-            switch ((player == 0 ? b.p1 : b.p2).mon().status) {
+            const auto& m = (player == 0 ? b.p1 : b.p2).mon();
+            switch (m.status) {
                 case Status::None: return std::string("none");
                 case Status::Sleep: return std::string("slp");
-                case Status::Poison: return std::string("psn");
+                case Status::Poison: return std::string(m.toxic ? "tox" : "psn");
                 case Status::Burn: return std::string("brn");
                 case Status::Freeze: return std::string("frz");
                 case Status::Paralysis: return std::string("par");

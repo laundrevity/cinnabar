@@ -58,9 +58,9 @@ OURS_ENTRIES = [
     ("DRAGON", "DRAGON", 200),
 ]
 
-# Showdown status id -> engine Effect (toxic collapses to plain poison; counter not modelled).
+# Showdown status id -> engine Effect. Toxic maps to its own Effect (escalating badly-poison counter).
 STATUS_EFFECT = {"par": "Effect::Paralyze", "slp": "Effect::Sleep", "frz": "Effect::Freeze",
-                 "brn": "Effect::Burn", "psn": "Effect::Poison", "tox": "Effect::Poison"}
+                 "brn": "Effect::Burn", "psn": "Effect::Poison", "tox": "Effect::Toxic"}
 # Boost stat key -> engine boost_stat index (Gen 1 special spa/spd both map to one "spc").
 BOOST_IDX = {"atk": 0, "def": 1, "spa": 2, "spd": 2, "spc": 2, "spe": 3, "accuracy": 4, "evasion": 5}
 CAT_ENUM = {"physical": "Category::Physical", "special": "Category::Special", "status": "Category::Status"}
@@ -132,12 +132,22 @@ def translate_move(mid: str, m: dict) -> tuple:
         effect, effect_chance = "Effect::Heal", 100  # 50% heal (poke-env omits Recover's heal field)
     elif mid == "reflect":
         effect, effect_chance = "Effect::Reflect", 100
+    elif mid == "lightscreen":
+        effect, effect_chance = "Effect::LightScreen", 100  # halves special damage taken (Reflect's mirror)
     elif mid == "substitute":
         effect, effect_chance = "Effect::Substitute", 100
     elif m.get("volatileStatus") == "confusion":
         effect, effect_chance = "Effect::Confuse", 100  # Confuse Ray
+    elif m.get("volatileStatus") == "leechseed":
+        effect, effect_chance = "Effect::LeechSeed", 100  # drains 1/16 max HP after the seeded mon's move
+    elif m.get("volatileStatus") == "disable":
+        effect, effect_chance = "Effect::Disable", 100  # disables a random PP>0 move slot for 1-8 turns
     elif mid == "counter":
         effect, effect_chance = "Effect::Counter", 100
+    elif mid == "superfang":
+        effect, effect_chance = "Effect::SuperFang", 100  # set damage = floor(target HP / 2)
+    elif mid == "psywave":
+        effect, effect_chance = "Effect::Psywave", 100     # random damage 50..150 at L100
     elif m.get("volatileStatus") == "partiallytrapped":
         effect, effect_chance = "Effect::Trap", 100  # Wrap / Bind / Fire Spin / Clamp
     elif m.get("status") in STATUS_EFFECT:
@@ -168,6 +178,21 @@ def translate_move(mid: str, m: dict) -> tuple:
     rec = m.get("recoil")  # [num, den] e.g. Double-Edge [33,100], Take Down [1,4], Struggle [1,2]
     recoil_num, recoil_den = ((int(rec[0]), int(rec[1]))
                               if isinstance(rec, (list, tuple)) and len(rec) == 2 else (0, 0))
+    dr = m.get("drain")  # [num, den] = [1, 2] for Mega Drain / Absorb / Leech Life / Dream Eater
+    drain_num, drain_den = ((int(dr[0]), int(dr[1]))
+                            if isinstance(dr, (list, tuple)) and len(dr) == 2 else (0, 0))
+    # Dream Eater fails unless the target is asleep (Showdown gates it via onTryImmunity, which
+    # poke-env doesn't surface as data, so key off the move id — it's the only such Gen 1 move).
+    needs_sleep = "true" if mid == "dreameater" else "false"
+    # Multi-hit: Showdown's `multihit` is an int (fixed count, e.g. Double Kick = 2) or [lo, hi]
+    # ([2, 5] for Pin Missile / Fury Attack / etc., which uses the gen1 sample distribution).
+    mh = m.get("multihit")
+    if isinstance(mh, (list, tuple)) and len(mh) == 2:
+        mh_min, mh_max = int(mh[0]), int(mh[1])
+    elif isinstance(mh, int) and mh > 0:
+        mh_min = mh_max = mh
+    else:
+        mh_min = mh_max = 0
     # ignoreImmunity: explicit flag if set, else status moves default to true (Showdown runImmunity).
     # So Thunder Wave (explicit false) respects type immunity; Confuse Ray / Glare ignore it.
     ig = m.get("ignoreImmunity")
@@ -175,7 +200,8 @@ def translate_move(mid: str, m: dict) -> tuple:
     priority = int(m.get("priority", 0) or 0)            # Counter = -5 (moves last)
     skip_ld = "true" if mid in SKIP_LASTDAMAGE else "false"  # does not reset battle.last_damage
     return (name, typ, cat, power, accuracy, fixed, effect, effect_chance, bstat, bstages, bfoe,
-            bchance, high_crit, pp, recharge, recoil_num, recoil_den, ignore_imm, priority, skip_ld)
+            bchance, high_crit, pp, recharge, recoil_num, recoil_den, ignore_imm, priority, skip_ld,
+            drain_num, drain_den, needs_sleep, mh_min, mh_max)
 
 
 def build_lines(correct, dex, moves) -> tuple[list[str], int, int]:
@@ -217,7 +243,8 @@ def build_lines(correct, dex, moves) -> tuple[list[str], int, int]:
                  "int power, accuracy, fixed; Effect effect; int effect_chance; "
                  "int boost_stat, boost_stages; bool boost_target_foe; int boost_chance; "
                  "bool high_crit; int pp; bool recharge; int recoil_num, recoil_den; "
-                 "bool ignore_immunity; int priority; bool skip_lastdamage; };")
+                 "bool ignore_immunity; int priority; bool skip_lastdamage; "
+                 "int drain_num, drain_den; bool needs_sleep_target; int multihit_min, multihit_max; };")
     lines.append("inline const MoveEntry GEN1_MOVES[] = {")
     n_moves = 0
     for mid in sorted(moves, key=lambda k: moves[k].get("num", 0)):
@@ -225,10 +252,12 @@ def build_lines(correct, dex, moves) -> tuple[list[str], int, int]:
         if type_to_enum(m.get("type", "")) == "Type::None":
             continue
         (name, typ, cat, power, accuracy, fixed, effect, ec, bstat, bstages, bfoe,
-         bchance, high_crit, pp, recharge, rnum, rden, iimm, prio, skip) = translate_move(mid, m)
+         bchance, high_crit, pp, recharge, rnum, rden, iimm, prio, skip,
+         dnum, dden, needsleep, mhmin, mhmax) = translate_move(mid, m)
         lines.append(f'    {{"{name}", {typ}, {cat}, {power}, {accuracy}, {fixed}, '
                      f'{effect}, {ec}, {bstat}, {bstages}, {bfoe}, {bchance}, {high_crit}, {pp}, '
-                     f'{recharge}, {rnum}, {rden}, {iimm}, {prio}, {skip}}},')
+                     f'{recharge}, {rnum}, {rden}, {iimm}, {prio}, {skip}, '
+                     f'{dnum}, {dden}, {needsleep}, {mhmin}, {mhmax}}},')
         n_moves += 1
     lines += ["};", "", "}  // namespace cinnabar"]
     return lines, n_species, n_moves

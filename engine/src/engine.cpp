@@ -45,7 +45,8 @@ const MoveData& move(const std::string& name) {
                                        e.effect, e.effect_chance, e.boost_stat, e.boost_stages,
                                        e.boost_target_foe, e.boost_chance, e.high_crit, e.pp,
                                        e.recharge, e.recoil_num, e.recoil_den, e.ignore_immunity,
-                                       e.priority, e.skip_lastdamage});
+                                       e.priority, e.skip_lastdamage, e.drain_num, e.drain_den,
+                                       e.needs_sleep_target, e.multihit_min, e.multihit_max});
         }
         return m;
     }();
@@ -213,6 +214,10 @@ bool can_act(Pokemon& p, RNG& rng) {
         p.must_recharge = false;  // flag, and skip the paralysis roll (priority 7 > par's 2).
         return false;
     }
+    // Disable (onBeforeMove priority 6, after recharge, before confusion): the timer ticks every turn
+    // this mon gets to move. The disabled slot is already excluded from choices(), so this only counts
+    // down (and frees the slot at 0) — it never cancels the move here.
+    if (p.disable_turns > 0 && --p.disable_turns == 0) p.disable_slot = -1;
     // Confusion (onBeforeMove priority 3, after recharge, before paralysis). Decrement; if it just
     // wore off the mon acts (and paralysis still rolls); else 50% it hits itself and loses the turn.
     if (p.confuse_turns > 0) {
@@ -231,19 +236,32 @@ bool can_act(Pokemon& p, RNG& rng) {
     return true;
 }
 
+// Gen 1 recovery bug: Recover / Soft-Boiled / Rest fail at full HP, and when current HP is exactly
+// 255 or 511 below max (i.e. (maxhp - hp + 1) is divisible by 256) unless HP is itself a multiple
+// of 256. Showdown checks the two exact values (HP is always < 768, so only those are reachable).
+bool recovery_fails(const Pokemon& p) {
+    if (p.hp == p.max_hp) return true;
+    int miss = p.max_hp - p.hp;
+    return (miss == 255 || miss == 511) && p.hp % 256 != 0;
+}
+
 void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
     if (mv->effect == Effect::None) return;
     switch (mv->effect) {
         case Effect::Heal:
-            user.hp = std::min(user.max_hp, user.hp + user.max_hp / 2);
+            if (!recovery_fails(user)) user.hp = std::min(user.max_hp, user.hp + user.max_hp / 2);
             return;
         case Effect::Rest:
+            if (recovery_fails(user)) return;  // same HP-mod-256 bug gates Rest (no sleep, no heal)
             user.status = Status::Sleep;
             user.sleep_turns = 2;
             user.hp = user.max_hp;
             return;
         case Effect::Reflect:
             user.reflect = true;
+            return;
+        case Effect::LightScreen:
+            user.light_screen = true;
             return;
         case Effect::SelfDestruct:
             return;
@@ -259,6 +277,9 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
                 else user.hp = 0;
             }
             return;
+        case Effect::SuperFang:
+        case Effect::Psywave:
+            return;  // set-damage moves: damage handled in use_move, no secondary effect or RNG
         default:
             break;
     }
@@ -272,6 +293,21 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
         if (tgt.confuse_turns == 0) tgt.confuse_turns = rng.range(2, 5);  // 2-5 turns (else already confused)
         return;
     }
+    if (mv->effect == Effect::LeechSeed) {  // a volatile; re-seeding an already-seeded target just fails
+        tgt.leech_seeded = true;
+        return;
+    }
+    if (mv->effect == Effect::Disable) {  // bypasses Substitute (gen1 bypasssub flag)
+        if (tgt.disable_turns > 0) return;  // already disabled -> addVolatile fails (accuracy already spent)
+        // Sample a random move slot with PP > 0 (Showdown's this.sample over the filtered slots), then
+        // roll the duration random(1,9) = 1-8 turns. These two draws happen only on a fresh disable.
+        std::vector<int> pp_slots;
+        for (size_t i = 0; i < tgt.pp.size(); ++i) if (tgt.pp[i] != 0) pp_slots.push_back(static_cast<int>(i));
+        if (pp_slots.empty()) return;
+        tgt.disable_slot = pp_slots[rng.random(static_cast<int>(pp_slots.size()))];
+        tgt.disable_turns = rng.random(1, 9);
+        return;
+    }
 
     const bool secondary = mv->effect_chance < 100;  // <100 == a damaging move's secondary
     // Substitute (Gen 1): while the target's sub is up, a damaging move's secondary status is
@@ -279,7 +315,7 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
     // paralysis / sleep / freeze / burn pass through the substitute.
     if (tgt.has_substitute) {
         if (secondary) return;
-        if (mv->effect == Effect::Poison) return;
+        if (mv->effect == Effect::Poison || mv->effect == Effect::Toxic) return;
     }
     const bool par_brn_frz = mv->effect == Effect::Paralyze || mv->effect == Effect::Burn ||
                              mv->effect == Effect::Freeze;
@@ -305,6 +341,7 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
         case Effect::Freeze:   tgt.status = Status::Freeze; break;
         case Effect::Burn:     tgt.status = Status::Burn; modify_stat(tgt, 0, 0.5); break;
         case Effect::Poison:   tgt.status = Status::Poison; break;
+        case Effect::Toxic:    tgt.status = Status::Poison; tgt.toxic = true; tgt.tox_stage = 0; break;
         default: break;
     }
 }
@@ -345,7 +382,11 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
         if (moveidx < 0 || moveidx >= static_cast<int>(a.moves.size())) return;
         mv = a.moves[moveidx];
         if (!mv) return;
-        if (a.pp[moveidx] > 0) --a.pp[moveidx];  // deduct PP on use (gen1: even if it misses/fails)
+        // Deduct PP on use (gen1: even if it misses/fails) — EXCEPT on a partial-trap continuation:
+        // a semi-locked move (Wrap/Clamp/Fire Spin/Bind) costs PP only on its initiating turn, not
+        // on the auto-repeated locked turns (Showdown: "Locked moves don't deduct PP").
+        const bool trap_continue = (mv->effect == Effect::Trap && a.wrap_turns > 0);
+        if (!trap_continue && a.pp[moveidx] > 0) --a.pp[moveidx];
     }
     as.last_move = mv;  // record the move used (Counter reads the opponent's last used move)
     if (!mv->skip_lastdamage) last_damage = 0;  // damaging non-Counter moves clear it; Counter/status don't
@@ -355,7 +396,8 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
     // Moves that target the user (Recover/Rest/Reflect/Substitute, self-boosts) skip the
     // accuracy roll and the immunity check below.
     bool self_targeting = mv->effect == Effect::Heal || mv->effect == Effect::Rest ||
-                          mv->effect == Effect::Reflect || mv->effect == Effect::Substitute ||
+                          mv->effect == Effect::Reflect || mv->effect == Effect::LightScreen ||
+                          mv->effect == Effect::Substitute ||
                           (mv->boost_stat >= 0 && !mv->boost_target_foe);  // Amnesia/SD/Agility
 
     // Gen 1 checks type immunity BEFORE accuracy (scripts.ts: runImmunity precedes the accuracy
@@ -366,6 +408,22 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
         combined_effectiveness(mv->type, d.species) == 0.0) {
         if (mv->effect == Effect::SelfDestruct) a.hp = 0;  // Explosion still faints the user
         return;
+    }
+    // Dream Eater fails (at the immunity step, before the accuracy roll, so no RNG) unless the
+    // target is asleep — Showdown gates it with onTryImmunity(target.status === 'slp').
+    if (mv->needs_sleep_target && d.status != Status::Sleep) return;
+    // Leech Seed fails on Grass-type targets (onTryImmunity), again before the accuracy roll.
+    if (mv->effect == Effect::LeechSeed &&
+        (d.species->t1 == Type::Grass || d.species->t2 == Type::Grass)) return;
+    // Poison types can't be poisoned: a primary poison move (Toxic / Poison Powder) fails before
+    // accuracy. (Damaging moves with a poison *secondary* are handled in the secondary roll path.)
+    if ((mv->effect == Effect::Toxic || (mv->effect == Effect::Poison && mv->effect_chance >= 100)) &&
+        (d.species->t1 == Type::Poison || d.species->t2 == Type::Poison)) return;
+    // Disable's onTryHit fails (before accuracy, no RNG) if the target has no move with PP left.
+    if (mv->effect == Effect::Disable) {
+        bool any_pp = false;
+        for (size_t i = 0; i < d.pp.size(); ++i) if (d.pp[i] != 0) { any_pp = true; break; }
+        if (!any_pp) return;
     }
 
     // Accuracy — Showdown gen1 rolls randomChance(clamp(floor(acc*255/100),1,255), 256) for
@@ -378,6 +436,22 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
             if (mv->effect == Effect::SelfDestruct) a.hp = 0;  // gen1: Explosion faints user on a miss
             last_damage = 0;  // a miss clears last_damage (Counter can't reflect a missed hit)
             return;
+        }
+    }
+
+    // Multi-hit count (Pin Missile / Double Kick / ...). Sampled AFTER accuracy and BEFORE the per-hit
+    // damage rolls (gen1 order). The [2,5] moves use the same fixed distribution as Wrap's duration;
+    // a fixed count (Double Kick = 2) consumes no RNG. In gen1 every hit deals the FIRST hit's damage
+    // (getDamage returns the stored value for hit>1), so crit/range are rolled once below and reused.
+    int multihits = 1;
+    if (mv->multihit_max > 0) {
+        if (mv->multihit_min == 2 && mv->multihit_max == 5) {
+            static const int MH[8] = {2, 2, 2, 3, 3, 3, 4, 5};
+            multihits = MH[rng.random(8)];
+        } else if (mv->multihit_min == mv->multihit_max) {
+            multihits = mv->multihit_min;  // fixed count, no RNG
+        } else {
+            multihits = rng.random(mv->multihit_min, mv->multihit_max + 1);
         }
     }
 
@@ -408,6 +482,23 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
         // Continuing partial-trap: re-deal the STORED first-turn damage — Gen 1 partial-trap damage
         // is fixed, so no crit/damage/accuracy rolls happen on continuation (keeps RNG aligned).
         int dmg = a.wrap_damage;
+        if (d.has_substitute) {
+            d.sub_hp -= dmg > d.sub_hp ? d.sub_hp : dmg;
+            if (d.sub_hp <= 0) { d.has_substitute = false; d.sub_hp = 0; }
+            last_damage = dmg;
+        } else {
+            int hit = dmg < d.hp ? dmg : d.hp;
+            d.hp -= hit;
+            last_damage = hit;
+        }
+    } else if (mv->effect == Effect::SuperFang || mv->effect == Effect::Psywave) {
+        // Set-damage moves whose amount comes from a Gen 1 damageCallback (not the type/STAB formula):
+        //   Super Fang = max(1, floor(target.hp / 2))          — no RNG
+        //   Psywave    = random(0, floor(1.5 * level))         — one RNG draw (0..149 at L100); a 0
+        //                roll makes the move fail (0 damage), which falls out naturally below.
+        // Applied like fixed damage: uncapped vs a Substitute, capped at HP vs a bare target.
+        int dmg = (mv->effect == Effect::SuperFang) ? std::max(1, d.hp / 2)
+                                                    : rng.random(0, (3 * a.level) / 2);
         if (d.has_substitute) {
             d.sub_hp -= dmg > d.sub_hp ? d.sub_hp : dmg;
             if (d.sub_hp <= 0) { d.has_substitute = false; d.sub_hp = 0; }
@@ -448,7 +539,8 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
         } else {
             atk = physical ? a.m_atk : a.m_spc;  // modifiedStats (boosts + burn drop)
             def = physical ? d.m_def : d.m_spc;
-            if (physical && d.reflect) def *= 2;  // Reflect doubles Def (a screen, not on crit)
+            if (physical && d.reflect) def *= 2;        // Reflect doubles Def (a screen, not on crit)
+            if (!physical && d.light_screen) def *= 2;  // Light Screen doubles Spc def (special side)
         }
         // Gen 1 stat rollover: if attack or defense >= 256, divide BOTH by 4 (mod 256).
         if (atk >= 256 || def >= 256) {
@@ -465,18 +557,25 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
                      a.species->name.c_str(), d.species->name.c_str(), atk, def,
                      static_cast<int>(stab), mult, static_cast<int>(crit), roll, dmg);
 #endif
-        if (d.has_substitute) {  // Gen 1: damage hits the sub; excess is NOT dealt to real HP
-            d.sub_hp -= dmg > d.sub_hp ? d.sub_hp : dmg;
-            recoil_ok = d.sub_hp > 0;  // recoil happens only if the sub survived (Gen 1)
-            if (d.sub_hp <= 0) { d.has_substitute = false; d.sub_hp = 0; }
-            recoil_base = dmg;  // uncapped (the Gen 1 sub quirk)
-        } else {
-            int actual = dmg < d.hp ? dmg : d.hp;  // Showdown caps damage at the target's HP
-            d.hp -= actual;
-            recoil_base = actual;
-            recoil_ok = true;
+        // Apply the hit `multihits` times (1 for a normal move). Each hit deals the same `dmg`
+        // (gen1 reuses hit 1's damage), capped per-hit at the target's current HP; the run stops
+        // when the target faints or its Substitute breaks. last_damage = the LAST hit (Counter).
+        for (int h = 0; h < multihits; ++h) {
+            if (d.fainted()) break;
+            if (d.has_substitute) {  // Gen 1: damage hits the sub; excess is NOT dealt to real HP
+                d.sub_hp -= dmg > d.sub_hp ? d.sub_hp : dmg;
+                recoil_ok = d.sub_hp > 0;  // recoil happens only if the sub survived (Gen 1)
+                recoil_base = dmg;         // uncapped (the Gen 1 sub quirk)
+                last_damage = dmg;
+                if (d.sub_hp <= 0) { d.has_substitute = false; d.sub_hp = 0; break; }  // sub broke -> stop
+            } else {
+                int actual = dmg < d.hp ? dmg : d.hp;  // Showdown caps damage at the target's HP
+                d.hp -= actual;
+                recoil_base = actual;
+                recoil_ok = true;
+                last_damage = actual;  // what a subsequent Counter would double
+            }
         }
-        last_damage = recoil_base;  // what a subsequent Counter would double
     }
 
     if (mv->effect == Effect::SelfDestruct) a.hp = 0;
@@ -485,6 +584,13 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
     if (mv->recoil_den > 0 && recoil_ok && recoil_base > 0) {
         a.hp -= std::max(1, recoil_base * mv->recoil_num / mv->recoil_den);
         if (a.hp < 0) a.hp = 0;
+    }
+    // Drain (Mega Drain / Absorb / Leech Life / Dream Eater): heal the user floor(damage * num/den),
+    // min 1, off the SAME damage figure recoil uses — capped vs a bare target, uncapped vs a
+    // Substitute, and (like recoil) only if the Substitute survived. The heal consumes no RNG.
+    if (mv->drain_den > 0 && recoil_ok && recoil_base > 0) {
+        a.hp += std::max(1, recoil_base * mv->drain_num / mv->drain_den);
+        if (a.hp > a.max_hp) a.hp = a.max_hp;
     }
     apply_effect(mv, a, d, rng);
     apply_boosts(mv, a, d, rng);
@@ -525,14 +631,24 @@ void try_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
 
 void residual(Pokemon& p) {
     if (p.fainted()) return;
-    if (p.status == Status::Burn || p.status == Status::Poison) {
+    if (p.status == Status::Poison && p.toxic) {
+        // Badly poisoned: damage = stage * floor(maxhp/16), with the stage incrementing (cap 15)
+        // before each tick. So the first tick is 1x, then 2x, 3x, ... (resets to 0 on switch).
+        if (p.tox_stage < 15) ++p.tox_stage;
+        p.hp -= std::max(1, p.max_hp / 16) * p.tox_stage;
+        if (p.hp < 0) p.hp = 0;
+    } else if (p.status == Status::Burn || p.status == Status::Poison) {
         p.hp -= std::max(1, p.max_hp / 16);
         if (p.hp < 0) p.hp = 0;
     }
 }
 
 void do_switch(Side& s, int idx) {
-    s.mon().reflect = false;  // Reflect ends when its user leaves the field
+    s.mon().reflect = false;       // Reflect ends when its user leaves the field
+    s.mon().light_screen = false;  // Light Screen likewise clears on switch out
+    s.mon().leech_seeded = false;  // Leech Seed is shed on switch out
+    s.mon().tox_stage = 0;         // Gen 1: the toxic counter resets on switch (status 'tox' persists)
+    s.mon().disable_slot = -1; s.mon().disable_turns = 0;  // Disable clears when its target leaves
     s.active = idx;
     Pokemon& in = s.mon();
     in.must_recharge = false;  // volatiles clear on switch (a recharge can't carry to a new mon)
@@ -613,9 +729,13 @@ std::vector<Choice> Battle::choices(int player) const {
         return out;
     }
     int avail = 0;
-    for (int i = 0; i < static_cast<int>(s.mon().moves.size()); ++i)
-        if (s.mon().pp[i] != 0) { out.push_back({ChoiceKind::Move, i}); ++avail; }  // pp 0 = exhausted
-    if (avail == 0) out.push_back({ChoiceKind::Move, -1});  // all moves out of PP -> Struggle
+    for (int i = 0; i < static_cast<int>(s.mon().moves.size()); ++i) {
+        if (s.mon().pp[i] == 0) continue;                                      // pp 0 = exhausted
+        if (s.mon().disable_turns > 0 && i == s.mon().disable_slot) continue;  // Disable: slot unselectable
+        out.push_back({ChoiceKind::Move, i});
+        ++avail;
+    }
+    if (avail == 0) out.push_back({ChoiceKind::Move, -1});  // all moves out of PP / disabled -> Struggle
     bench();
     return out;
 }
@@ -674,11 +794,24 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
                  static_cast<int>(p1_first), static_cast<int>(tie));
 #endif
 
+    // Leech Seed drains the seeded mon for 1/16 max HP right after ITS OWN move (gen1 onAfterMoveSelf,
+    // priority 1 — after burn/poison's priority 2), healing the leecher. Gen 1 recovery is NOT limited
+    // by the seeded mon's remaining HP (the leecher gets the full amount). No RNG.
+    auto leech = [](Pokemon& seeded, Pokemon& leecher) {
+        if (!seeded.leech_seeded || leecher.fainted()) return;
+        int toLeech = std::max(1, seeded.max_hp / 16);
+        if (seeded.hp > 0) seeded.hp -= toLeech < seeded.hp ? toLeech : seeded.hp;  // drain (capped)
+        // Gen 1: the leecher recovers the full amount even if the seeded mon had less HP — or already
+        // fainted to its OWN move's recoil this turn (the leech still fires and heals the leecher).
+        leecher.hp += toLeech;
+        if (leecher.hp > leecher.max_hp) leecher.hp = leecher.max_hp;
+    };
     // Burn/poison ticks 1/16 right after the afflicted mon's own move (onAfterMoveSelf),
     // including a turn it's fully paralyzed/asleep (the move action still resolves) — but NOT
-    // on a turn its move faints the target (Gen 1: AfterMoveSelf needs target.hp > 0).
-    auto act1 = [&]() { if (m1) { try_move(p1, p2, c1.index, rng, last_damage); if (!p2.mon().fainted()) residual(p1.mon()); } };
-    auto act2 = [&]() { if (m2) { try_move(p2, p1, c2.index, rng, last_damage); if (!p1.mon().fainted()) residual(p2.mon()); } };
+    // on a turn its move faints the target (Gen 1: AfterMoveSelf needs target.hp > 0). Leech Seed
+    // shares that gate (the whole AfterMoveSelf event is skipped when the move KO'd its target).
+    auto act1 = [&]() { if (m1) { try_move(p1, p2, c1.index, rng, last_damage); if (!p2.mon().fainted()) { residual(p1.mon()); leech(p1.mon(), p2.mon()); } } };
+    auto act2 = [&]() { if (m2) { try_move(p2, p1, c2.index, rng, last_damage); if (!p1.mon().fainted()) { residual(p2.mon()); leech(p2.mon(), p1.mon()); } } };
     // If a side has no Pokémon left after the first move (Self-Destruct, Struggle recoil, or a
     // residual KO), the battle is over: Showdown stops the turn — no second move, no shuffles.
     if (p1_first) {
