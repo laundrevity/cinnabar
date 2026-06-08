@@ -53,6 +53,7 @@ TEAMS = _FALLBACK_TEAMS  # set from --teams-dir in main() if any teams load
 # --random-movesets swaps in the moveset sampler (set in main()).
 _PICK_TEAM = lambda: random.choice(TEAMS)  # noqa: E731
 _K = 1  # frame-stack depth (1 = off); set from --frame-stack in main(). Net global dim = GLOBAL_DIM*_K.
+_CLAUSES = False  # OU Sleep+Freeze Clause on every training battle; set from --clauses in main().
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,6 +92,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gen-teams", action="store_true",
                    help="generate a fresh team from the whole metagame per battle (any 6 viable-OU "
                         "species + sampled movesets) instead of the fixed pool. The scale-up environment.")
+    p.add_argument("--clauses", action="store_true",
+                   help="enable OU Sleep + Freeze Clause on every battle (matches the real format): a "
+                        "second foe-inflicted sleep/freeze fails. Teaches correct status play; without "
+                        "it the agent over-values sleep (it can sleep your whole team in training).")
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-battles", type=int, default=200)
     p.add_argument("--ckpt-every", type=int, default=25)
@@ -242,7 +247,10 @@ def _make_battles(n, base):
         s1 = [(s, list(m)) for s, m in t1]
         s2 = [(s, list(m)) for s, m in t2]
         # r1/r2: persistent per-battle reveal sets (partial info + the agent's revealed-team memory).
-        items.append({"b": ce.make_battle(s1, s2, base + i), "s1": s1, "s2": s2,
+        b = ce.make_battle(s1, s2, base + i)
+        if _CLAUSES:
+            b.set_clauses(True)  # OU Sleep+Freeze Clause for this battle
+        items.append({"b": b, "s1": s1, "s2": s2,
                       "tag": f"{base}_{i}", "r1": Reveal(), "r2": Reveal(),
                       "h0": [], "h1": []})  # per-side global-frame history (frame-stacking)
     return items
@@ -311,8 +319,11 @@ def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     random.seed(args.seed)
-    global _STATIC, TEAMS, _PICK_TEAM, _K
+    global _STATIC, TEAMS, _PICK_TEAM, _K, _CLAUSES
     _K = max(1, args.frame_stack)
+    _CLAUSES = bool(args.clauses)
+    if _CLAUSES:
+        print("clauses: ON (Sleep + Freeze Clause — second foe-inflicted sleep/freeze fails)")
     if _K > 1:
         print(f"frame-stack: {_K} (net global dim = {GLOBAL_DIM} x {_K} = {GLOBAL_DIM * _K})")
     _STATIC = StaticData(1)  # poke-env static data used by build_state

@@ -201,7 +201,7 @@ bool can_act(Pokemon& p, RNG& rng) {
             return false;  // Gen 1: frozen solid (thaw not modelled yet)
         case Status::Sleep:
             if (p.sleep_turns > 0) --p.sleep_turns;
-            if (p.sleep_turns <= 0) p.status = Status::None;
+            if (p.sleep_turns <= 0) { p.status = Status::None; p.status_by_foe = false; }  // wake: clears the clause hold
             return false;  // Gen 1: a turn is always lost to sleep, including the wake turn
         default:
             break;
@@ -242,7 +242,18 @@ bool recovery_fails(const Pokemon& p) {
     return (miss == 255 || miss == 511) && p.hp % 256 != 0;
 }
 
-void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
+// Sleep / Freeze Clause (OU, training only): a fresh foe-inflicted `st` fails if another living
+// mon on the target's side already carries that status from a foe's move. Off unless clauses are
+// enabled, so the clause-free fidelity harness is unaffected. Rest-induced sleep never sets
+// status_by_foe, so it's correctly exempt.
+static bool clause_blocks(const Side& side, const Pokemon& tgt, Status st) {
+    if (!side.clauses) return false;
+    for (const auto& m : side.team)
+        if (&m != &tgt && !m.fainted() && m.status == st && m.status_by_foe) return true;
+    return false;
+}
+
+void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, Side& tgt_side, RNG& rng) {
     if (mv->effect == Effect::None) return;
     switch (mv->effect) {
         case Effect::Heal:
@@ -334,8 +345,14 @@ void apply_effect(const MoveData* mv, Pokemon& user, Pokemon& tgt, RNG& rng) {
 
     switch (mv->effect) {
         case Effect::Paralyze: tgt.status = Status::Paralysis; modify_stat(tgt, 3, 0.25); break;
-        case Effect::Sleep:    tgt.status = Status::Sleep; tgt.sleep_turns = rng.range(1, 7); break;
-        case Effect::Freeze:   tgt.status = Status::Freeze; break;
+        case Effect::Sleep:
+            if (clause_blocks(tgt_side, tgt, Status::Sleep)) break;  // Sleep Clause: 2nd foe-sleep fails
+            tgt.status = Status::Sleep; tgt.sleep_turns = rng.range(1, 7); tgt.status_by_foe = true;
+            break;
+        case Effect::Freeze:
+            if (clause_blocks(tgt_side, tgt, Status::Freeze)) break;  // Freeze Clause: 2nd foe-freeze fails
+            tgt.status = Status::Freeze; tgt.status_by_foe = true;
+            break;
         case Effect::Burn:     tgt.status = Status::Burn; modify_stat(tgt, 0, 0.5); break;
         case Effect::Poison:   tgt.status = Status::Poison; break;
         case Effect::Toxic:    tgt.status = Status::Poison; tgt.toxic = true; tgt.tox_stage = 0; break;
@@ -589,7 +606,7 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
         a.hp += std::max(1, recoil_base * mv->drain_num / mv->drain_den);
         if (a.hp > a.max_hp) a.hp = a.max_hp;
     }
-    apply_effect(mv, a, d, rng);
+    apply_effect(mv, a, d, ds, rng);
     apply_boosts(mv, a, d, rng);
     // Hyper Beam: the user owes a recharge turn — UNLESS the move KO'd the target (the famous
     // Gen 1 "no recharge on KO"). Reaching here means the move hit (a miss/immunity returned early).

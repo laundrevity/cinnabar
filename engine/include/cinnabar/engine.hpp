@@ -81,6 +81,8 @@ struct Pokemon {
     int boost_atk = 0, boost_def = 0, boost_spc = 0, boost_spe = 0;  // stages, -6..+6
     Status status = Status::None;
     int sleep_turns = 0;
+    bool status_by_foe = false;  // this Sleep/Freeze was inflicted by a foe's move (not Rest) — for
+                                 // Sleep/Freeze Clause: only one foe-inflicted sleep|freeze per side
     bool toxic = false;   // badly poisoned (Toxic): reports 'tox' and deals escalating residual damage
     int tox_stage = 0;    // toxic counter; residual = tox_stage * floor(maxhp/16), +1 per turn; resets on switch
     bool reflect = false;        // volatile: Reflect screen (doubles Def), cleared on switch out
@@ -130,6 +132,8 @@ struct Side {
     std::vector<Pokemon> team;  // up to 6
     int active = 0;
     bool must_switch = false;  // active fainted, a replacement is required
+    bool clauses = false;      // OU Sleep + Freeze Clause enabled (training only; off for the
+                               // bit-for-bit fidelity harness, which validates vs clause-free customgame)
     // For Counter (Gen 1): the last move this side executed and last move it selected. Both are
     // per-side and persist across switches (Counter can reflect damage from a since-switched mon).
     const MoveData* last_move = nullptr;
@@ -157,6 +161,11 @@ struct Battle {
     int last_damage = 0;  // most recent damage dealt in the battle (what Counter doubles)
 
     Battle(Side a, Side b, uint64_t seed) : p1(std::move(a)), p2(std::move(b)), rng(seed) {}
+
+    // Enable/disable OU Sleep + Freeze Clause on both sides. Off by default (keeps the fidelity
+    // harness validating against clause-free customgame); training turns it on so the agent learns
+    // that a second foe-inflicted sleep/freeze fails — instead of spamming sleep as a free win.
+    void set_clauses(bool on) { p1.clauses = p2.clauses = on; }
 
     std::vector<Choice> choices(int player) const;  // 0 = p1, 1 = p2
     Result step(const Choice& c1, const Choice& c2);

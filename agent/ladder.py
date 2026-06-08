@@ -58,7 +58,7 @@ def _load_net(path: str, hidden: int, device: str, k: int = 1) -> NetPolicy:
     return NetPolicy(net, device, k)
 
 
-def _play(p1, p2, teams, n, base, mirror, static, turn_limit, pick_team=None):
+def _play(p1, p2, teams, n, base, mirror, static, turn_limit, pick_team=None, clauses=False):
     """Return p1's score (win=1, tie=0.5) over n games, split across both lead positions."""
     pick_team = pick_team or (lambda: random.choice(teams))
     score = 0.0
@@ -66,7 +66,8 @@ def _play(p1, p2, teams, n, base, mirror, static, turn_limit, pick_team=None):
         t1 = pick_team()
         t2 = t1 if mirror else pick_team()
         a, b = (p1, p2) if i % 2 == 0 else (p2, p1)  # alternate who leads (cancels P1 edge)
-        r = play_battle(a, b, t1, t2, static, base + i, tag=f"{base}_{i}", turn_limit=turn_limit).result()
+        r = play_battle(a, b, t1, t2, static, base + i, tag=f"{base}_{i}", turn_limit=turn_limit,
+                        clauses=clauses).result()
         p1_is_a = i % 2 == 0
         if r == ce.Result.Tie or r == ce.Result.Ongoing:
             score += 0.5
@@ -112,6 +113,8 @@ def main() -> None:
     ap.add_argument("--gen-teams", action="store_true",
                     help="generate whole teams from the metagame per battle (match --gen-teams training)")
     ap.add_argument("--frame-stack", type=int, default=1, help="stack last K turns' globals (match training)")
+    ap.add_argument("--clauses", action="store_true",
+                    help="enable OU Sleep + Freeze Clause (match --clauses training / the real format)")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     random.seed(a.seed)
@@ -144,7 +147,7 @@ def main() -> None:
     for i in range(k):
         for j in range(i + 1, k):
             s = _play(players[i][1], players[j][1], teams, a.battles, base, a.mirror, static, a.turn_limit,
-                      pick_team=pick_team)
+                      pick_team=pick_team, clauses=a.clauses)
             base += a.battles
             wins[i][j], wins[j][i] = s, a.battles - s
             games[i][j] = games[j][i] = a.battles

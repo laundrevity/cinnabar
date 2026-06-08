@@ -215,13 +215,16 @@ def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str
 
 
 def play_battle(p1_policy, p2_policy, team1: Team, team2: Team, static: StaticData,
-                seed: int, tag: str = "eng", turn_limit: int = 1000):
+                seed: int, tag: str = "eng", turn_limit: int = 1000, clauses: bool = False):
     """Run one battle on the engine, p1_policy vs p2_policy. Returns the ce.Battle so the
     caller can read result() / final_material(). Policies record their own steps (e.g.
-    PGPolicy via battle_tag); p1 records under `tag`, p2 under `tag + "_opp"`."""
+    PGPolicy via battle_tag); p1 records under `tag`, p2 under `tag + "_opp"`.
+    `clauses` enables OU Sleep + Freeze Clause (match training / the real format)."""
     spec1 = [(s, list(mvs)) for s, mvs in team1]
     spec2 = [(s, list(mvs)) for s, mvs in team2]
     battle = ce.make_battle(spec1, spec2, seed)
+    if clauses:
+        battle.set_clauses(True)
 
     r1, r2 = Reveal(), Reveal()  # p1's memory of p2 (and vice-versa) — partial info + revealed moves
     turns = 0

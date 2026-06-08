@@ -37,7 +37,9 @@ _OPP_MOVE_DIM = 7
 #          + extra volatiles(12): own+opp {confused, reflect, light_screen, leech_seeded, disabled, toxic}
 #          + revealed opponent team: TEAM_SIZE slots x _OPP_MON_DIM (partial-info memory)
 #          + active opponent's revealed-move threat profile (_OPP_MOVE_DIM)
-GLOBAL_DIM = 2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12 + 12 + TEAM_SIZE * _OPP_MON_DIM + _OPP_MOVE_DIM
+#          + clause state(2): do I already have a foe asleep / frozen (my next sleep/freeze fails)
+GLOBAL_DIM = (2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12 + 12
+              + TEAM_SIZE * _OPP_MON_DIM + _OPP_MOVE_DIM + 2)
 # action = move features(7) + switch-target features(3) + fixed-damage(1) + effect features(11):
 #   status one-hot(5) + chance(1) + heals/boosts_self/lowers_foe/recharge/self_destruct(5)
 ACTION_DIM = 7 + 3 + 1 + 11
@@ -134,6 +136,13 @@ def encode_global(state: BattleState) -> list[float]:
     our_sleep = (state.active.sleep_turns / 7.0) if state.active else 0.0
     opp_sleep = (state.opponent_active.sleep_turns / 7.0) if state.opponent_active else 0.0
 
+    # Sleep/Freeze Clause state: 1.0 when a foe is already asleep/frozen, so under the OU clauses my
+    # next sleep/freeze move FAILS. Without this the net can't tell a sleeping foe from a paralysed
+    # one (the opp-team encoding only carries a binary "statused"), so it can't learn to stop
+    # spamming sleep into a clause-locked target — the exact bug from the browser loss.
+    opp_asleep = 1.0 if any(m.status == "SLP" for m in state.opponent_team) else 0.0
+    opp_frozen = 1.0 if any(m.status == "FRZ" for m in state.opponent_team) else 0.0
+
     # Volatiles the agent was previously blind to: confusion, both screens, Leech Seed, a Disabled
     # slot, and badly-poisoned (toxic, distinct from regular poison). 6 bools per side.
     def _vol(mon) -> list[float]:
@@ -163,9 +172,11 @@ def encode_global(state: BattleState) -> list[float]:
         *_encode_opp_team(state),
         *_encode_opp_moves(state),
         # New volatiles appended LAST so older feature indices are stable — lets an old checkpoint
-        # warm-start by zero-padding these 12 columns (see agent/pad_checkpoint.py).
+        # warm-start by zero-padding these columns (see agent/pad_checkpoint.py).
         *_vol(state.active),
         *_vol(state.opponent_active),
+        opp_asleep,  # clause state (also appended last for stable indices / warm-start)
+        opp_frozen,
     ]
 
 

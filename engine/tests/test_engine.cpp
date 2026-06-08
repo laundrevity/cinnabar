@@ -207,6 +207,29 @@ int main() {
         CHECK(r != Result::Ongoing);
     }
 
+    // Sleep Clause (training flag, default off): a foe-inflicted sleep fails when another of that
+    // side's mons is already asleep by a foe's move. Freeze Clause shares the same code path. The
+    // clause is off by default, so the bit-for-bit fidelity harness (clause-free) is unaffected.
+    {
+        static const MoveData LULLABY{"Lullaby", Type::Normal, Category::Status, 0, 100, 0, Effect::Sleep, 100};
+        auto setup = [&](bool clauses) {
+            Side p1{{make_pokemon(&species("Alakazam"), {&LULLABY, &RECOVER})}};
+            Side p2{{make_pokemon(&species("Chansey"), {&SOFT_BOILED}),
+                     make_pokemon(&species("Snorlax"), {&BODY_SLAM})}};
+            Battle b(std::move(p1), std::move(p2), 5);
+            b.p2.team[1].status = Status::Sleep;     // a benched foe is already asleep...
+            b.p2.team[1].status_by_foe = true;       // ...from a foe's move (counts for the clause)
+            if (clauses) b.set_clauses(true);
+            return b;
+        };
+        Battle on = setup(true);
+        on.step(move_choice(0), move_choice(0));     // Alakazam Lullaby vs Chansey
+        CHECK(on.p2.team[0].status != Status::Sleep);  // clause ON: the second sleep fails
+        Battle off = setup(false);
+        off.step(move_choice(0), move_choice(0));
+        CHECK(off.p2.team[0].status == Status::Sleep); // clause OFF (default): the sleep lands
+    }
+
     if (failures == 0) std::printf("ALL ENGINE TESTS PASSED\n");
     else std::printf("%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;
