@@ -494,19 +494,25 @@ void use_move(Side& as, Side& ds, int moveidx, RNG& rng, int& last_damage) {
     if (mv->effect == Effect::Trap) {
         // Partial-trap (Wrap/Bind/Fire Spin/Clamp): lock the user re-using this move for a sampled
         // 2-5 turns and hold the foe (it loses its turn). Durations tick at END of turn (step()),
-        // so the foe stays trapped through the final turn. Each non-final turn re-holds the foe
-        // (Showdown's onAfterMove re-adds partiallytrapped unless this is the last turn).
-        // (fakepartiallytrapped — the cosmetic "free turn" display flag — is intentionally omitted.)
+        // so the foe stays trapped through the final turn. On a non-final turn Showdown's onAfterMove
+        // re-adds partiallytrapped to the foe; on the FINAL turn (and only if the lock wasn't the
+        // max 5-turn roll) it instead adds the cosmetic `fakepartiallytrapped` to BOTH mons for two
+        // turns. That volatile has no battle effect, but it carries a `duration`, so its handler joins
+        // the end-of-turn Residual fieldEvent's speed-sort and consumes shuffle RNG (residual_trap_shuffle).
         if (!wrap_continue) {  // first hit: sample the lock duration and store the fixed damage
             static const int DUR[8] = {2, 2, 2, 3, 3, 3, 4, 5};
             a.wrap_turns = DUR[rng.random(8)];  // sampled even on a KO (onStart runs before removal)
+            a.wrap_total = a.wrap_turns;
             a.wrap_idx = moveidx;
             a.wrap_damage = recoil_base;
         }
-        if (d.fainted()) {               // a KO removes the lock
+        if (d.fainted()) {               // a KO removes the lock (Showdown's onAfterMove early-returns)
             a.wrap_turns = 0; a.wrap_idx = -1;
         } else if (a.wrap_turns != 1) {  // not the final turn -> keep the foe held
             d.partial_trapped = 2;
+        } else if (a.wrap_total != 5) {  // final turn -> fakepartiallytrapped on both (unless 5-turn lock)
+            a.fake_trap_turns = 2;
+            d.fake_trap_turns = 2;
         }
     }
 }
@@ -532,7 +538,8 @@ void do_switch(Side& s, int idx) {
     in.must_recharge = false;  // volatiles clear on switch (a recharge can't carry to a new mon)
     in.has_substitute = false; in.sub_hp = 0;  // a Substitute does not persist across a switch
     in.confuse_turns = 0;      // confusion clears on switch out
-    in.wrap_turns = 0; in.wrap_idx = -1; in.wrap_damage = 0; in.partial_trapped = 0;  // trap clears on switch
+    in.wrap_turns = 0; in.wrap_total = 0; in.wrap_idx = -1; in.wrap_damage = 0;  // trap clears on switch
+    in.partial_trapped = 0; in.fake_trap_turns = 0;
     // Gen 1: stat stages reset on switch — recompute modified stats from the stored stats...
     in.boost_atk = in.boost_def = in.boost_spc = in.boost_spe = 0;
     in.m_atk = in.atk; in.m_def = in.def; in.m_spc = in.spc; in.m_spe = in.spe;
@@ -541,6 +548,39 @@ void do_switch(Side& s, int idx) {
     if (in.status == Status::Burn) modify_stat(in, 0, 0.5);
     // Note: Gen 1 does NOT tick burn/poison on switch-in (the conditions' onAfterSwitchInSelf
     // isn't triggered by gen1's engine — verified by differential testing).
+}
+
+// End-of-turn Residual fieldEvent shuffle. Showdown's fieldEvent('Residual') collects every handler
+// whose state carries a `duration`, speed-sorts them (Battle.speedSort), and PRNG-shuffles each
+// maximal same-speed group. In Gen 1 the ONLY duration-bearing states are the three partial-trap
+// volatiles — sleep/freeze/confusion track `time`, not `duration`, so they never enter this sort
+// (which is why non-wrap battles consume no shuffle RNG). We don't model handler objects, so we just
+// reproduce the shuffle's RNG draws to keep the stream aligned (the sort result itself is cosmetic):
+//   - partialtrappinglock  -> on the wrapper while locked        (wrap_turns > 0)
+//   - partiallytrapped     -> on the victim while held           (partial_trapped > 0)
+//   - fakepartiallytrapped -> on BOTH for two turns at a boundary (fake_trap_turns > 0)
+// Handlers tie iff they share a holder speed, so each mon's handlers form one same-speed group.
+void residual_trap_shuffle(Side& p1, Side& p2, RNG& rng) {
+    auto handler_count = [](const Pokemon& m) {
+        if (m.fainted()) return 0;  // fieldEvent skips handlers whose holder has fainted
+        return (m.wrap_turns > 0 ? 1 : 0) + (m.partial_trapped > 0 ? 1 : 0) + (m.fake_trap_turns > 0 ? 1 : 0);
+    };
+    int h1 = handler_count(p1.mon()), h2 = handler_count(p2.mon());
+    if (h1 + h2 < 2) return;  // speedSort is a no-op below two handlers
+    int s1 = effective_speed(p1.mon()), s2 = effective_speed(p2.mon());
+    // prng.shuffle(list, start, end): for i in [start, end-1) draw random(i, end). A group of size k
+    // therefore burns k-1 draws. speedSort processes groups fastest-first; equal speed merges them.
+    auto shuffle_group = [&](int start, int end) {
+        for (int i = start; i + 1 < end; ++i) rng.random(i, end);
+    };
+    if (s1 == s2) {
+        shuffle_group(0, h1 + h2);  // both holders share a speed -> a single tied group
+    } else {
+        int hf = (s1 > s2) ? h1 : h2;  // faster holder's handlers occupy the front of the list
+        int hs = (s1 > s2) ? h2 : h1;
+        if (hf >= 2) shuffle_group(0, hf);
+        if (hs >= 2) shuffle_group(hf, hf + hs);
+    }
 }
 }  // namespace
 
@@ -650,11 +690,16 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
     }
     if (result() == Result::Ongoing && tie) { rng.random(0, 2); rng.random(0, 2); }
 
+    // End-of-turn Residual fieldEvent: speed-sort + shuffle the duration-bearing (partial-trap)
+    // handlers. Runs before the duration tick (Showdown sorts, then decrements in sorted order).
+    if (result() == Result::Ongoing) residual_trap_shuffle(p1, p2, rng);
+
     // Partial-trap durations tick down at end of turn (Showdown's duration system), so the foe
     // stays held through the wrapper's final turn and is freed the turn after.
     auto tick = [](Pokemon& m) {
         if (m.wrap_turns > 0 && --m.wrap_turns == 0) m.wrap_idx = -1;
         if (m.partial_trapped > 0) --m.partial_trapped;
+        if (m.fake_trap_turns > 0) --m.fake_trap_turns;
     };
     tick(p1.mon());
     tick(p2.mon());

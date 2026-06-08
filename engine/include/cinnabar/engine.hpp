@@ -3,11 +3,12 @@
 // Covers: 6-Pokémon teams + switching (with forced switch on faint), status
 // (sleep/freeze/paralysis/burn/poison) and the moves that cause them, healing
 // (Recover/Rest), Reflect, Explosion/Self-Destruct, fixed-damage moves, stat stages,
-// PP/Struggle, Hyper Beam recharge, and the Gen 1 damage/stat/type formulas — all
-// validated bit-for-bit against Showdown (Gen 5 LCG RNG).
+// PP/Struggle, Hyper Beam recharge, recoil, confusion (Confuse Ray), Substitute, Counter,
+// partial-trapping (Wrap/Fire Spin/Clamp/Bind, incl. the Residual fieldEvent shuffle RNG),
+// and the Gen 1 damage/stat/type formulas — all validated bit-for-bit against Showdown (Gen 5 LCG RNG).
 //
-// Not yet modelled (refine via differential testing vs Showdown): freeze thaw, confusion,
-// Substitute, Counter, partial-trapping (Wrap/Fire Spin), multi-turn moves (Thrash/Dig/Fly).
+// Not yet modelled (refine via differential testing vs Showdown): freeze thaw,
+// multi-turn locking moves (Thrash/Petal Dance), charge/semi-invulnerable moves (Dig/Fly/Sky Attack).
 #pragma once
 
 #include <cstdint>
@@ -81,9 +82,12 @@ struct Pokemon {
     int sub_hp = 0;              // remaining Substitute HP (floor(maxhp/4)+1 when created)
     int confuse_turns = 0;      // volatile: remaining confusion turns (0 = not confused); cleared on switch
     int wrap_turns = 0;         // wrapper: partial-trap lock duration remaining (re-uses wrap_idx while >0)
+    int wrap_total = 0;         // the sampled lock duration (fakepartiallytrapped is skipped when this is 5)
     int wrap_idx = -1;          // the move slot the wrapper is locked into (Wrap/Bind/Fire Spin/Clamp)
     int wrap_damage = 0;        // first-turn damage, re-dealt each turn (Gen 1 partial-trap is fixed)
     int partial_trapped = 0;    // victim: partiallytrapped duration remaining (loses its turn while >0)
+    int fake_trap_turns = 0;    // fakepartiallytrapped: 2-turn cosmetic volatile (its onDisableMove handler
+                                // joins Showdown's fieldEvent speed-sort, consuming shuffle RNG at boundaries)
     std::vector<const MoveData*> moves;
     std::vector<int> pp;  // current PP per move slot (parallel to moves); -1 = untracked/unlimited
 
