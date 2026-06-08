@@ -50,12 +50,13 @@ def _load_net(path: str, hidden: int, device: str) -> NetPolicy:
     return NetPolicy(net, device)
 
 
-def _play(p1, p2, teams, n, base, mirror, static, turn_limit):
+def _play(p1, p2, teams, n, base, mirror, static, turn_limit, pick_team=None):
     """Return p1's score (win=1, tie=0.5) over n games, split across both lead positions."""
+    pick_team = pick_team or (lambda: random.choice(teams))
     score = 0.0
     for i in range(n):
-        t1 = random.choice(teams)
-        t2 = t1 if mirror else random.choice(teams)
+        t1 = pick_team()
+        t2 = t1 if mirror else pick_team()
         a, b = (p1, p2) if i % 2 == 0 else (p2, p1)  # alternate who leads (cancels P1 edge)
         r = play_battle(a, b, t1, t2, static, base + i, tag=f"{base}_{i}", turn_limit=turn_limit).result()
         p1_is_a = i % 2 == 0
@@ -98,6 +99,8 @@ def main() -> None:
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--turn-limit", type=int, default=500)
     ap.add_argument("--mirror", action="store_true", help="same team both sides (isolate skill)")
+    ap.add_argument("--random-movesets", action="store_true",
+                    help="re-sample movesets per battle (match training; cinnabar/movesets.py)")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     random.seed(a.seed)
@@ -105,6 +108,11 @@ def main() -> None:
 
     static = StaticData(1)
     teams = load_teams(a.teams_dir) or T._FALLBACK_TEAMS
+    pick_team = None
+    if a.random_movesets:
+        from cinnabar import movesets
+        rosters = movesets.rosters_from_teams(teams)
+        pick_team = lambda: movesets.sample_team(random.choice(rosters))  # noqa: E731
 
     players: list[tuple[str, Policy]] = [
         ("random", RandomPolicy()), ("maxdamage", MaxDamagePolicy()), ("smart", SmartHeuristicPolicy()),
@@ -119,7 +127,8 @@ def main() -> None:
     base = 1
     for i in range(k):
         for j in range(i + 1, k):
-            s = _play(players[i][1], players[j][1], teams, a.battles, base, a.mirror, static, a.turn_limit)
+            s = _play(players[i][1], players[j][1], teams, a.battles, base, a.mirror, static, a.turn_limit,
+                      pick_team=pick_team)
             base += a.battles
             wins[i][j], wins[j][i] = s, a.battles - s
             games[i][j] = games[j][i] = a.battles

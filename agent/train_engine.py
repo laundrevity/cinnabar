@@ -49,6 +49,9 @@ _FALLBACK_TEAMS = [
      ("Jynx", ["Blizzard", "Psychic", "Body Slam", "Seismic Toss"])],
 ]
 TEAMS = _FALLBACK_TEAMS  # set from --teams-dir in main() if any teams load
+# Per-battle team source: returns one engine TeamSpec. Default picks a fixed team from the pool;
+# --random-movesets swaps in the moveset sampler (set in main()).
+_PICK_TEAM = lambda: random.choice(TEAMS)  # noqa: E731
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,6 +81,9 @@ def parse_args() -> argparse.Namespace:
                    help="self/league: which fixed baseline to anchor a fraction of iters against")
     p.add_argument("--teams-dir", default=str(Path(__file__).resolve().parent.parent / "teams"),
                    help="dir of Showdown team .txt files (a random one per side per battle)")
+    p.add_argument("--random-movesets", action="store_true",
+                   help="re-sample each species' moves per battle (keeps the pool's rosters); makes "
+                        "moveset hidden info real and forces generalization (cinnabar/movesets.py)")
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-battles", type=int, default=200)
     p.add_argument("--ckpt-every", type=int, default=25)
@@ -219,7 +225,7 @@ def build_rewards(recs, battle, args) -> list[float]:
 def _make_battles(n, base):
     items = []
     for i in range(n):
-        t1, t2 = random.choice(TEAMS), random.choice(TEAMS)
+        t1, t2 = _PICK_TEAM(), _PICK_TEAM()
         s1 = [(s, list(m)) for s, m in t1]
         s2 = [(s, list(m)) for s, m in t2]
         # r1/r2: persistent per-battle reveal sets (partial info + the agent's revealed-team memory).
@@ -290,12 +296,17 @@ def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     random.seed(args.seed)
-    global _STATIC, TEAMS
+    global _STATIC, TEAMS, _PICK_TEAM
     _STATIC = StaticData(1)  # poke-env static data used by build_state
     loaded = load_teams(args.teams_dir)
     if loaded:
         TEAMS = loaded
     print(f"teams: {len(TEAMS)} ({'from ' + args.teams_dir if loaded else 'fallback'})")
+    if args.random_movesets:
+        from cinnabar import movesets
+        rosters = movesets.rosters_from_teams(TEAMS)
+        _PICK_TEAM = lambda: movesets.sample_team(random.choice(rosters))  # noqa: E731
+        print(f"random movesets: ON ({len(rosters)} rosters, per-species movepools)")
 
     net = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
     if args.init:
