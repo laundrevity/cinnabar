@@ -53,7 +53,13 @@ class NetPolicy(Policy):
 
 def _load_net(path: str, hidden: int, device: str, k: int = 1) -> NetPolicy:
     net = ActionScorer(GLOBAL_DIM * k, ACTION_DIM, hidden).to(device)
-    net.load_state_dict(torch.load(path, map_location=device))
+    sd = torch.load(path, map_location=device)
+    if sd["value_mlp.0.weight"].shape[1] != GLOBAL_DIM * k:  # older/smaller checkpoint -> auto-pad
+        from pad_checkpoint import pad_state_dict
+        old = sd["value_mlp.0.weight"].shape[1]
+        pad_state_dict(sd, k)
+        print(f"  (auto-padded {Path(path).name}: global {old} -> {GLOBAL_DIM * k}; new features zeroed)")
+    net.load_state_dict(sd)
     net.eval()
     return NetPolicy(net, device, k)
 

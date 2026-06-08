@@ -21,15 +21,18 @@ from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM
 from cinnabar.rl.net import ActionScorer
 
 
-def pad(in_path: str, out_path: str, hidden: int = 128, frames: int = 1) -> None:
-    sd = torch.load(in_path, map_location="cpu")
+def pad_state_dict(sd: dict, frames: int = 1) -> dict:
+    """In-place pad a checkpoint's input layers to the current GLOBAL_DIM (x frames), zero-filling
+    the new (appended-last) global features and any earlier frames. Returns sd. Single source of
+    truth shared by the CLI below and the auto-pad in the net loaders (ladder.py / play.py /
+    train_engine --init), so an older checkpoint just loads instead of crashing on a dim mismatch."""
     pw = sd["policy_mlp.0.weight"]      # [hidden, old_global + ACTION_DIM]  (global cols first)
     vw = sd["value_mlp.0.weight"]       # [hidden, old_global]
     old_global = vw.shape[1]
     h = pw.shape[0]
     n_pad = GLOBAL_DIM - old_global
     if n_pad < 0:
-        raise SystemExit(f"current GLOBAL_DIM {GLOBAL_DIM} < checkpoint's {old_global}")
+        raise ValueError(f"current GLOBAL_DIM {GLOBAL_DIM} < checkpoint's {old_global}")
     # 1) append zero columns so the global dim matches the current GLOBAL_DIM.
     if n_pad > 0:
         g_part, a_part = pw[:, :old_global], pw[:, old_global:]
@@ -42,6 +45,13 @@ def pad(in_path: str, out_path: str, hidden: int = 128, frames: int = 1) -> None
         pw = torch.cat([z, g_part, a_part], dim=1)
         vw = torch.cat([z, vw], dim=1)
     sd["policy_mlp.0.weight"], sd["value_mlp.0.weight"] = pw, vw
+    return sd
+
+
+def pad(in_path: str, out_path: str, hidden: int = 128, frames: int = 1) -> None:
+    sd = torch.load(in_path, map_location="cpu")
+    old_global = sd["value_mlp.0.weight"].shape[1]
+    pad_state_dict(sd, frames)
     ActionScorer(GLOBAL_DIM * frames, ACTION_DIM, hidden).load_state_dict(sd)  # sanity: shapes line up
     torch.save(sd, out_path)
     print(f"wrote {out_path}: global {old_global} -> {GLOBAL_DIM} x {frames} frames = {GLOBAL_DIM * frames}")

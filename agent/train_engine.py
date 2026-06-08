@@ -343,7 +343,13 @@ def main() -> None:
 
     net = ActionScorer(GLOBAL_DIM * _K, ACTION_DIM, args.hidden).to(args.device)
     if args.init:
-        net.load_state_dict(torch.load(args.init, map_location=args.device))
+        sd = torch.load(args.init, map_location=args.device)
+        if sd["value_mlp.0.weight"].shape[1] != GLOBAL_DIM * _K:  # older checkpoint -> auto-pad to warm-start
+            from pad_checkpoint import pad_state_dict
+            old = sd["value_mlp.0.weight"].shape[1]
+            pad_state_dict(sd, _K)
+            print(f"init: auto-padded global {old} -> {GLOBAL_DIM * _K} (new features zeroed for a fair warm-start)")
+        net.load_state_dict(sd)
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
 
     # Opponent: a fixed policy/snapshot, or a growing league pool of past snapshots.

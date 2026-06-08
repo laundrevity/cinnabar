@@ -37,7 +37,11 @@ def build_policy(args):
     from cinnabar.rl.net import ActionScorer
 
     net = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
-    net.load_state_dict(torch.load(args.checkpoint, map_location=args.device))
+    sd = torch.load(args.checkpoint, map_location=args.device)
+    if sd["value_mlp.0.weight"].shape[1] != GLOBAL_DIM:  # older checkpoint (e.g. pre-clause) -> auto-pad
+        from pad_checkpoint import pad_state_dict
+        pad_state_dict(sd, 1)
+    net.load_state_dict(sd)
     policy = PGPolicy(net, device=args.device)
     policy.eval()  # greedy
     return policy, f"trained[{Path(args.checkpoint).name}]"
