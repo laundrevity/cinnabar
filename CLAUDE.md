@@ -24,8 +24,10 @@ minutes. Remaining work is open-ended ML iteration (curriculum, breadth, tuning)
   small movepools, simpler type chart and status rules. This keeps the state/action space
   tractable while still being a real competitive format.
 - Gen 1 OU *does* include team-building. We train over a **pool of fixed teams** (`teams/`,
-  one chosen at random per battle via `agent/cinnabar/teams.py`) for generalization, and
-  treat team-building (the agent constructing its own team) as a later, separable problem.
+  one chosen at random per battle via `agent/cinnabar/teams.py`) for generalization. Team-building
+  (the agent constructing its own team) was the deferred "later, separable problem"; the first cut
+  is now `agent/evolve_teams.py` — coevolutionary search that evolves winning teams with the trained
+  agent as pilot (a learned drafter / PSRO are the later, more ambitious steps).
 
 ## Architecture decisions (and the reasoning — don't relitigate without cause)
 
@@ -75,7 +77,10 @@ cinnabar/
 │   │                       #   showdown.py (poke-env adapter) | engine_cpp.py (C++ engine adapter)
 │   ├── play.py             # Phase 0: accept human challenges in Gen 1 OU
 │   ├── train.py            # PPO training via Showdown (poke-env)
-│   ├── train_engine.py     # PPO training in-process on the C++ engine (vectorized)
+│   ├── train_engine.py     # PPO training in-process on the C++ engine (vectorized); --clauses for OU Sleep/Freeze Clause
+│   ├── evolve_teams.py     # coevolutionary team optimizer (team construction): evolve winning teams, agent pilots both sides
+│   ├── ladder.py           # Elo ladder over baselines + checkpoints (--clauses to rate under OU clauses)
+│   ├── pad_checkpoint.py   # zero-pad/frame-replicate old checkpoints to the current GLOBAL_DIM (fair warm-start)
 │   ├── smoke_test.py / smoke_engine.py  # bot-vs-bot sanity checks (Showdown / C++ engine)
 │   └── tests/              # pytest for the engine-free core
 ├── teams/              # Gen 1 OU teams in Showdown export format
@@ -103,6 +108,8 @@ cinnabar/
 - **Fidelity harness (engine vs Showdown):** `cd agent && uv run python ../engine/tools/trace_diff.py sweep 200` (needs the submodule built; env vars `CINNABAR_P{1,2}_{SPECIES,TEAM,MOVE}`, `CINNABAR_VOL=1`)
 - **Self-play smoke on the engine:** `cd agent && uv run python smoke_engine.py`
 - **Train on the engine:** `cd agent && uv run python train_engine.py --opponent maxdamage --reward shaped` (`--smoke` for a tiny run; `--opponent self` for self-play)
+- **Train with OU clauses:** add `--clauses` (Sleep + Freeze Clause — a 2nd foe-inflicted sleep/freeze fails). Modeled as a per-`Side` flag, **default off** so the bit-for-bit harness (clause-free `gen1customgame`) is untouched; `ladder.py --clauses` rates under the same rule. Without it the agent over-values sleep (it can sleep your whole team in training). GLOBAL_DIM gained 2 clause-perception features — warm-start old nets with `pad_checkpoint.py`.
+- **Evolve teams (team construction):** `cd agent && uv run python evolve_teams.py --ckpt models_clauses/pg_best.pt --pop 24 --gens 30 --clauses --out evolved` — coevolution: the agent pilots both sides, teams compete vs the population, top teams written as Showdown `.txt`. The pilot ckpt must match the current GLOBAL_DIM (use `pad_checkpoint.py` on older ones).
 
 ## Conventions
 
