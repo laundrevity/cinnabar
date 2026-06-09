@@ -43,7 +43,7 @@ from cinnabar import movesets
 from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM, featurize
 from cinnabar.engine_cpp import Reveal, StaticData, build_state, load_teams, play_battle, reveal_move
 from cinnabar.policy import SmartHeuristicPolicy, StallerPolicy
-from cinnabar.search import search_action_values
+from cinnabar.search import play_search_battle, search_action_values
 from ladder import NetPolicy, _load_net
 
 import cinnabar_engine as ce  # noqa: E402
@@ -102,7 +102,7 @@ def train(net, init_net, opt, samples, device, epochs, batch_size, value_coef, a
     net.train()
     for ep in range(epochs):
         random.shuffle(samples)
-        tot = pol = val = anc = 0.0
+        tot = pol = val = anc = match = 0.0
         nb = 0
         for i in range(0, len(samples), batch_size):
             batch = samples[i:i + batch_size]
@@ -134,6 +134,9 @@ def train(net, init_net, opt, samples, device, epochs, batch_size, value_coef, a
             with torch.no_grad():
                 init_logp = F.log_softmax(init_net.score_actions_batch(gf, af, mask), dim=1)
                 init_p = init_logp.exp()
+                # Teacher-match: does the student's argmax equal the teacher's? Separates
+                # "underfit" (low match) from "no headroom" (high match, flat eval).
+                match += (logits.argmax(1) == target.argmax(1)).float().mean().item()
             kl = torch.where(mask, init_p * (init_logp - logp), torch.zeros_like(logp)).sum(1).mean()
             loss = p_loss + value_coef * v_loss + anchor_coef * kl
             opt.zero_grad()
@@ -146,7 +149,7 @@ def train(net, init_net, opt, samples, device, epochs, batch_size, value_coef, a
             nb += 1
         nb = max(nb, 1)
         print(f"    epoch {ep}: loss {tot/nb:.4f}  (policy {pol/nb:.4f}, value {val/nb:.4f}, "
-              f"anchor-KL {anc/nb:.4f})")
+              f"anchor-KL {anc/nb:.4f}, teacher-match {match/nb*100:.0f}%)")
     net.eval()
 
 
@@ -186,6 +189,10 @@ def main() -> None:
                          "data caused a staller-shaped regression). 0 = pure self-play")
     ap.add_argument("--eval-battles", type=int, default=300,
                     help="games per eval line (120 had SE~4.5%% — too noisy to gate keep-best)")
+    ap.add_argument("--eval-search", type=int, default=0,
+                    help="ALSO measure gated-search strength per round with N games per opponent "
+                         "(the AlphaZero criterion: the PLAYER improves through a better value head "
+                         "and prior even when raw greedy doesn't; slow). Included in keep-best.")
     ap.add_argument("--epochs", type=int, default=4, help="distillation epochs per round")
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--lr", type=float, default=3e-4)
@@ -217,11 +224,33 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     smart, staller = SmartHeuristicPolicy(), StallerPolicy()
 
+    def search_strength(opponent, n, seed0):
+        """Gated-search (current net as prior + value head) win% vs `opponent` as P1."""
+        w = 0.0
+        pick_t = random.Random(seed0)
+        for i in range(n):
+            t1, t2 = pick_t.choice(teams), pick_t.choice(teams)
+            r = play_search_battle(net, opponent, opp_model, t1, t2, static, seed0 + i,
+                                   clauses=a.clauses, device=a.device, rollouts=a.rollouts,
+                                   top_k=a.top_k).result()
+            if r in (ce.Result.Tie, ce.Result.Ongoing):
+                w += 0.5
+            elif r == ce.Result.P1Win:
+                w += 1.0
+        return w / n
+
     def full_eval(tag):
         ws = quick_eval(net, a.device, teams, static, a.clauses, smart, n=a.eval_battles)
         wt = quick_eval(net, a.device, teams, static, a.clauses, staller, n=a.eval_battles, seed0=5077)
-        print(f"  {tag}: raw greedy vs smart {ws*100:.1f}%  vs staller {wt*100:.1f}%")
-        return (ws + wt) / 2
+        line = f"  {tag}: raw greedy vs smart {ws*100:.1f}%  vs staller {wt*100:.1f}%"
+        scores = [ws, wt]
+        if a.eval_search > 0:
+            ss = search_strength(smart, a.eval_search, 9090)
+            st = search_strength(staller, a.eval_search, 9690)
+            line += f"  |  SEARCH vs smart {ss*100:.1f}%  vs staller {st*100:.1f}%"
+            scores += [ss, st]
+        print(line)
+        return sum(scores) / len(scores)
 
     print(f"expert iteration v2: rounds={a.rounds} games/round={a.games} rollouts={a.rollouts} "
           f"top-k={a.top_k} tau={a.tau} anchor={a.anchor_coef} opp-model={a.opp_model} "
