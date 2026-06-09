@@ -1,26 +1,8 @@
-Tauros
-- Body Slam
-- Hyper Beam
-- Earthquake
-- Blizzard
-
-Snorlax
-- Body Slam
-- Earthquake
-- Hyper Beam
-- Self-Destruct
-
-Chansey
-- Ice Beam
-- Thunderbolt
-- Thunder Wave
-- Soft-Boiled
-
-Exeggutor
-- Sleep Powder
+Alakazam
 - Psychic
-- Explosion
-- Double-Edge
+- Recover
+- Thunder Wave
+- Seismic Toss
 
 Starmie
 - Thunderbolt
@@ -28,8 +10,26 @@ Starmie
 - Recover
 - Thunder Wave
 
-Alakazam
+Exeggutor
+- Sleep Powder
 - Psychic
-- Recover
+- Explosion
+- Double-Edge
+
+Chansey
+- Ice Beam
+- Thunderbolt
 - Thunder Wave
-- Seismic Toss
+- Soft-Boiled
+
+Snorlax
+- Body Slam
+- Earthquake
+- Hyper Beam
+- Self-Destruct
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Earthquake
+- Blizzard
