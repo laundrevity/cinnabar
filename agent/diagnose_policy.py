@@ -201,6 +201,17 @@ def main() -> None:
     gap = (smt_def - net_def) * 100
     print(f"    gap             {gap:+5.1f}%   (positive = the net is the worse pilot of defense)")
 
+    # 4. MIRROR play — net vs net, the configuration the evolution judge and self-play actually run
+    # on, and where the switch-loop lives (watched browser game, 2026-06: an 8-turn resist-swap
+    # ping-pong that no vs-heuristic probe ever showed). Win% is 50% by construction; the switch
+    # rate and game length are the signal.
+    cnet3 = Counting(net)
+    _, turns_m, stall_m = behavior(cnet3, net, teams, a.battles, static, a.clauses, a.turn_limit, 20_000)
+    print(f"\n  MIRROR (net vs net — the judge's configuration):")
+    print(f"    net switch rate {cnet3.switch_rate*100:5.1f}%   (vs {cnet.switch_rate*100:.1f}% against smart)")
+    print(f"    re-slept rate   {cnet3.reslept_rate*100:5.1f}%")
+    print(f"    avg game length {turns_m:5.1f} turns, hit turn limit {stall_m*100:.1f}%")
+
 
 if __name__ == "__main__":
     main()
