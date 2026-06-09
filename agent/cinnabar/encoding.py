@@ -40,9 +40,10 @@ _OPP_MOVE_DIM = 7
 #          + clause state(2): do I already have a foe asleep / frozen (my next sleep/freeze fails)
 GLOBAL_DIM = (2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12 + 12
               + TEAM_SIZE * _OPP_MON_DIM + _OPP_MOVE_DIM + 2)
-# action = move features(7) + switch-target features(3) + fixed-damage(1) + effect features(11):
-#   status one-hot(5) + chance(1) + heals/boosts_self/lowers_foe/recharge/self_destruct(5)
-ACTION_DIM = 7 + 3 + 1 + 11
+# action = move features(7) + switch-target features(3) + fixed-damage(1) + effect features(11)
+#   [status one-hot(5) + chance(1) + heals/boosts_self/lowers_foe/recharge/self_destruct(5)]
+#   + clause-fail(1): this sleep/freeze move will FAIL right now (a foe is already asleep/frozen)
+ACTION_DIM = 7 + 3 + 1 + 11 + 1
 
 # The status a move can inflict, encoded as a one-hot for the action features.
 _EFFECT_STATUS_ORDER = ["SLP", "PAR", "FRZ", "BRN", "PSN"]
@@ -210,6 +211,16 @@ def encode_action(action: Action, state: BattleState) -> list[float]:
     # moves that share power/type (e.g. Recover vs Sleep Powder vs Thunder Wave vs Reflect).
     status_one_hot = [1.0 if action.effect_status == s else 0.0 for s in _EFFECT_STATUS_ORDER]
 
+    # Clause-fail: a direct, per-action signal that THIS sleep/freeze move would just fail right now
+    # because a foe is already asleep/frozen (Sleep/Freeze Clause spent). The global opp_asleep flag
+    # made the net infer this interaction and it under-learned it (15% re-sleep); this hands it the
+    # fact outright. Appended LAST so pad_checkpoint warm-starts old nets at zero contribution.
+    will_fail = 0.0
+    if action.effect_status == "SLP" and any(m.status == "SLP" for m in state.opponent_team):
+        will_fail = 1.0
+    elif action.effect_status == "FRZ" and any(m.status == "FRZ" for m in state.opponent_team):
+        will_fail = 1.0
+
     return [
         1.0 if is_move else 0.0,
         1.0 if action.type == ActionType.SWITCH else 0.0,
@@ -229,6 +240,7 @@ def encode_action(action: Action, state: BattleState) -> list[float]:
         1.0 if action.lowers_foe else 0.0,
         1.0 if action.recharge else 0.0,
         1.0 if action.self_destruct else 0.0,
+        will_fail,  # clause-fail (appended last for stable indices / warm-start)
     ]
 
 

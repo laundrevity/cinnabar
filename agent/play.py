@@ -38,7 +38,8 @@ def build_policy(args):
 
     net = ActionScorer(GLOBAL_DIM, ACTION_DIM, args.hidden).to(args.device)
     sd = torch.load(args.checkpoint, map_location=args.device)
-    if sd["value_mlp.0.weight"].shape[1] != GLOBAL_DIM:  # older checkpoint (e.g. pre-clause) -> auto-pad
+    if (sd["policy_mlp.0.weight"].shape[1] != GLOBAL_DIM + ACTION_DIM
+            or sd["value_mlp.0.weight"].shape[1] != GLOBAL_DIM):  # older checkpoint -> auto-pad
         from pad_checkpoint import pad_state_dict
         pad_state_dict(sd, 1)
     net.load_state_dict(sd)

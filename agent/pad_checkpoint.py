@@ -26,23 +26,26 @@ def pad_state_dict(sd: dict, frames: int = 1) -> dict:
     the new (appended-last) global features and any earlier frames. Returns sd. Single source of
     truth shared by the CLI below and the auto-pad in the net loaders (ladder.py / play.py /
     train_engine --init), so an older checkpoint just loads instead of crashing on a dim mismatch."""
-    pw = sd["policy_mlp.0.weight"]      # [hidden, old_global + ACTION_DIM]  (global cols first)
+    pw = sd["policy_mlp.0.weight"]      # [hidden, old_global + old_action]  (global cols first)
     vw = sd["value_mlp.0.weight"]       # [hidden, old_global]
-    old_global = vw.shape[1]
     h = pw.shape[0]
-    n_pad = GLOBAL_DIM - old_global
-    if n_pad < 0:
-        raise ValueError(f"current GLOBAL_DIM {GLOBAL_DIM} < checkpoint's {old_global}")
-    # 1) append zero columns so the global dim matches the current GLOBAL_DIM.
-    if n_pad > 0:
-        g_part, a_part = pw[:, :old_global], pw[:, old_global:]
-        pw = torch.cat([g_part, torch.zeros(h, n_pad), a_part], dim=1)
-        vw = torch.cat([vw, torch.zeros(h, n_pad)], dim=1)
-    # 2) frame-replicate: weights into the LAST frame, earlier frames zeroed.
+    old_global = vw.shape[1]
+    old_action = pw.shape[1] - old_global
+    g_pad = GLOBAL_DIM - old_global
+    a_pad = ACTION_DIM - old_action
+    if g_pad < 0 or a_pad < 0:
+        raise ValueError(f"current dims (G={GLOBAL_DIM}, A={ACTION_DIM}) smaller than the "
+                         f"checkpoint's (G={old_global}, A={old_action})")
+    # 1) zero-pad the global cols (inserted after the old global block) and the action cols (appended
+    #    at the very end) so both new global AND new action features start at zero contribution.
+    g_part, a_part = pw[:, :old_global], pw[:, old_global:]
+    pw = torch.cat([g_part, torch.zeros(h, g_pad), a_part, torch.zeros(h, a_pad)], dim=1)
+    vw = torch.cat([vw, torch.zeros(h, g_pad)], dim=1)
+    # 2) frame-replicate the global block: weights into the LAST frame, earlier frames zeroed.
     if frames > 1:
-        g_part, a_part = pw[:, :GLOBAL_DIM], pw[:, GLOBAL_DIM:]
+        g_new, a_new = pw[:, :GLOBAL_DIM], pw[:, GLOBAL_DIM:]
         z = torch.zeros(h, (frames - 1) * GLOBAL_DIM)
-        pw = torch.cat([z, g_part, a_part], dim=1)
+        pw = torch.cat([z, g_new, a_new], dim=1)
         vw = torch.cat([z, vw], dim=1)
     sd["policy_mlp.0.weight"], sd["value_mlp.0.weight"] = pw, vw
     return sd
