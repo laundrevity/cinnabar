@@ -23,7 +23,7 @@ from pathlib import Path
 
 import torch
 
-from cinnabar.engine_cpp import StaticData, load_teams, parse_team, play_battle
+from cinnabar.engine_cpp import StaticData, parse_team, play_battle
 from cinnabar.policy import Policy, SmartHeuristicPolicy, StallerPolicy
 from cinnabar.state import ActionType
 from ladder import _load_net
@@ -141,19 +141,26 @@ def _team_score(r, lead) -> float:
     return 1.0 if (r == ce.Result.P1Win) == lead else 0.0
 
 
-def behavior(p1, p2, teams, n, static, clauses, turn_limit, seed0):
-    """p1's win-rate, avg turns, and turn-limit (stall) rate over n battles, leads alternated."""
+def behavior(p1, p2, teams, n, static, clauses, turn_limit, seed0,
+             counter=None, names=None, loopy=None):
+    """p1's win-rate, avg turns, and turn-limit (stall) rate over n battles, leads alternated.
+    If `counter` (the Counting wrapper around p1) + `names` (id(team) -> file stem) + `loopy`
+    (output list) are given, battles where p1 ran a 5+ voluntary-switch streak are recorded as
+    (seed, p1-team-name, p2-team-name, lead, streak) so they can be replayed in watch_engine.py."""
     win = turns = stalls = 0.0
     for i in range(n):
         t1, t2 = random.choice(teams), random.choice(teams)
         lead = i % 2 == 0
-        a, b = (p1, p2) if lead else (p2, p1)
-        bat = play_battle(a, b, t1, t2, static, seed0 + i, tag=f"d{seed0+i}",
+        pa, pb = (p1, p2) if lead else (p2, p1)
+        s = seed0 + i
+        bat = play_battle(pa, pb, t1, t2, static, s, tag=f"d{s}",
                           turn_limit=turn_limit, clauses=clauses)
         r = bat.result()
         turns += bat.turn
         stalls += 1.0 if r == ce.Result.Ongoing else 0.0
         win += _team_score(r, lead)
+        if counter is not None and loopy is not None and counter._battle_max >= 5:
+            loopy.append((s, names[id(t1)], names[id(t2)], lead, counter._battle_max))
         seed0 += 1
     return win / n, turns / n, stalls / n
 
@@ -187,15 +194,30 @@ def main() -> None:
     random.seed(a.seed)
     torch.manual_seed(a.seed)
     static = StaticData(1)
-    teams = load_teams(a.teams_dir)
+    named = [(p.stem, parse_team(p.read_text())) for p in sorted(Path(a.teams_dir).glob("*.txt"))]
+    named = [(nm, t) for nm, t in named if t]
+    teams = [t for _, t in named]
+    names = {id(t): nm for nm, t in named}
     if not teams:
         raise SystemExit(f"no teams in {a.teams_dir}")
     net = _load_net(a.ckpt, a.hidden, a.device, 1)
     smart = SmartHeuristicPolicy()
 
+    def replay_cmds(loopy, opp_pilot):
+        """Ready-to-run watch_engine.py commands reproducing each loopy battle (same teams, seed,
+        deterministic pilots — if a replay diverges, the heuristic is using unseeded RNG)."""
+        cl = " --clauses" if a.clauses else ""
+        for s, t1n, t2n, lead, mx in loopy[:5]:
+            p1p, p2p = ("raw", opp_pilot) if lead else (opp_pilot, "raw")
+            print(f"      uv run python watch_engine.py --ckpt {a.ckpt} --p1 {a.teams_dir}/{t1n}.txt "
+                  f"--p2 {a.teams_dir}/{t2n}.txt --p1-pilot {p1p} --p2-pilot {p2p} --seed {s} "
+                  f"--turn-limit {a.turn_limit}{cl}   # streak {mx}")
+
     # 1+2. switch rate, game length, stall rate — net vs heuristic.
     cnet, csmart = Counting(net), Counting(smart)
-    win, avg_turns, stall = behavior(cnet, csmart, teams, a.battles, static, a.clauses, a.turn_limit, 1)
+    loopy_smart: list = []
+    win, avg_turns, stall = behavior(cnet, csmart, teams, a.battles, static, a.clauses, a.turn_limit, 1,
+                                     counter=cnet, names=names, loopy=loopy_smart)
     print(f"\nnet ({Path(a.ckpt).name}) vs smart heuristic — {a.battles} battles, "
           f"clauses {'on' if a.clauses else 'off'}\n")
     print(f"  net win%            {win*100:5.1f}")
@@ -208,6 +230,9 @@ def main() -> None:
     cnet.flush()
     print(f"  switch-loop tail    longest streak {cnet.max_streak}, "
           f"battles with a 5+ streak: {cnet.loopy_battles}/{a.battles}")
+    if loopy_smart:
+        print("    replay the worst (turn-by-turn transcript):")
+        replay_cmds(sorted(loopy_smart, key=lambda x: -x[4]), "heuristic")
 
     # 3. same defensive team, two pilots, identical opponents.
     def_team = parse_team(DEFENSIVE_TEAM)
@@ -235,7 +260,9 @@ def main() -> None:
     # ping-pong that no vs-heuristic probe ever showed). Win% is 50% by construction; the switch
     # rate and game length are the signal.
     cnet3 = Counting(net)
-    _, turns_m, stall_m = behavior(cnet3, net, teams, a.battles, static, a.clauses, a.turn_limit, 20_000)
+    loopy_mirror: list = []
+    _, turns_m, stall_m = behavior(cnet3, net, teams, a.battles, static, a.clauses, a.turn_limit, 20_000,
+                                   counter=cnet3, names=names, loopy=loopy_mirror)
     print(f"\n  MIRROR (net vs net — the judge's configuration):")
     print(f"    net switch rate {cnet3.switch_rate*100:5.1f}%   (vs {cnet.switch_rate*100:.1f}% against smart)")
     print(f"    re-slept rate   {cnet3.reslept_rate*100:5.1f}%")
@@ -243,6 +270,9 @@ def main() -> None:
     cnet3.flush()
     print(f"    switch-loop tail  longest streak {cnet3.max_streak}, "
           f"battles with a 5+ streak: {cnet3.loopy_battles}/{a.battles}")
+    if loopy_mirror:
+        print("    replay the worst (turn-by-turn transcript):")
+        replay_cmds(sorted(loopy_mirror, key=lambda x: -x[4]), "raw")
 
 
 if __name__ == "__main__":
