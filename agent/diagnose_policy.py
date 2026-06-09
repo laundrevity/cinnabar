@@ -82,8 +82,29 @@ class Counting(Policy):
         # available (so sleeping again would just fail under the clause), how often does it sleep?
         self.sleep_tempt = 0
         self.sleep_reslept = 0
+        # Switch-LOOP tail metric (a watched browser game showed an 8-turn resist-swap ping-pong
+        # that the average switch rate dilutes away): longest run of consecutive voluntary
+        # switches, and how many battles contain a run >= 5.
+        self.max_streak = 0
+        self.loopy_battles = 0
+        self._tag = None
+        self._streak = 0
+        self._battle_max = 0
+
+    def _new_battle(self, tag) -> None:
+        if self._battle_max >= 5:
+            self.loopy_battles += 1
+        self._tag = tag
+        self._streak = 0
+        self._battle_max = 0
+
+    def flush(self) -> None:
+        """Count the final battle's streak (call once after the last battle)."""
+        self._new_battle(None)
 
     def select_action(self, state):
+        if state.battle_tag != self._tag:
+            self._new_battle(state.battle_tag)
         foe_asleep = any(getattr(m, "status", None) == "SLP" for m in getattr(state, "opponent_team", []))
         sleep_avail = any(getattr(x, "effect_status", "") == "SLP" for x in state.available_actions)
         a = self.inner.select_action(state)
@@ -93,10 +114,15 @@ class Counting(Policy):
                 self.sleep_reslept += 1
         if getattr(state, "force_switch", False):
             self.forced += 1
+            self._streak = 0
         elif a.type == ActionType.SWITCH:
             self.switches += 1
+            self._streak += 1
+            self._battle_max = max(self._battle_max, self._streak)
+            self.max_streak = max(self.max_streak, self._streak)
         else:
             self.moves += 1
+            self._streak = 0
         return a
 
     @property
@@ -179,6 +205,9 @@ def main() -> None:
     print(f"  hit turn limit      {stall*100:5.1f}%   (stall-loops that never resolve)")
     print(f"  re-slept rate       {cnet.reslept_rate*100:5.1f}%   "
           f"({cnet.sleep_reslept}/{cnet.sleep_tempt} times a foe was already asleep + a sleep move was up)")
+    cnet.flush()
+    print(f"  switch-loop tail    longest streak {cnet.max_streak}, "
+          f"battles with a 5+ streak: {cnet.loopy_battles}/{a.battles}")
 
     # 3. same defensive team, two pilots, identical opponents.
     def_team = parse_team(DEFENSIVE_TEAM)
@@ -211,6 +240,9 @@ def main() -> None:
     print(f"    net switch rate {cnet3.switch_rate*100:5.1f}%   (vs {cnet.switch_rate*100:.1f}% against smart)")
     print(f"    re-slept rate   {cnet3.reslept_rate*100:5.1f}%")
     print(f"    avg game length {turns_m:5.1f} turns, hit turn limit {stall_m*100:.1f}%")
+    cnet3.flush()
+    print(f"    switch-loop tail  longest streak {cnet3.max_streak}, "
+          f"battles with a 5+ streak: {cnet3.loopy_battles}/{a.battles}")
 
 
 if __name__ == "__main__":
