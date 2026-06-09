@@ -52,9 +52,12 @@ Sample = tuple  # (global, action_feats, candidates, q_values, outcome)
 
 
 def generate_game(net, opp_model, team1, team2, static, seed, device, rollouts, clauses,
-                  turn_limit, top_k):
-    """One self-play game, both sides by gated search. Records (state, candidate Q-vector, outcome)
-    per real decision — the full search distribution, not just its argmax."""
+                  turn_limit, top_k, opp_policy=None):
+    """One teacher game. Both sides by gated search (self-play), or — when `opp_policy` is given —
+    P2 plays that policy directly (an ANCHOR game: keeps non-mirror styles, e.g. relentless attack,
+    in the distillation data; train_engine's --anchor-frac trick). Records (state, candidate
+    Q-vector, outcome) per real decision — the full search distribution, not just its argmax.
+    Anchor games record only P1's (search) decisions."""
     spec1 = [(s, list(m)) for s, m in team1]
     spec2 = [(s, list(m)) for s, m in team2]
     battle = ce.make_battle(spec1, spec2, seed)
@@ -70,17 +73,20 @@ def generate_game(net, opp_model, team1, team2, static, seed, device, rollouts, 
         c1, v1 = search_action_values(battle, 0, net, opp_model, static, spec1, spec2,
                                       reveal=r1, device=device, rollouts=rollouts,
                                       state=s1, top_k=top_k)
-        c2, v2 = search_action_values(battle, 1, net, opp_model, static, spec2, spec1,
-                                      reveal=r2, device=device, rollouts=rollouts,
-                                      state=s2, top_k=top_k)
         if len(s1.available_actions) > 1:
             g, a = featurize(s1)
             recs.append((0, g, a, c1, v1))
-        if len(s2.available_actions) > 1:
-            g, a = featurize(s2)
-            recs.append((1, g, a, c2, v2))
         i1 = c1[max(range(len(v1)), key=v1.__getitem__)]
-        i2 = c2[max(range(len(v2)), key=v2.__getitem__)]
+        if opp_policy is not None:
+            i2 = opp_policy.select_action(s2).index
+        else:
+            c2, v2 = search_action_values(battle, 1, net, opp_model, static, spec2, spec1,
+                                          reveal=r2, device=device, rollouts=rollouts,
+                                          state=s2, top_k=top_k)
+            if len(s2.available_actions) > 1:
+                g, a = featurize(s2)
+                recs.append((1, g, a, c2, v2))
+            i2 = c2[max(range(len(v2)), key=v2.__getitem__)]
         a1, a2 = s1.available_actions[i1], s2.available_actions[i2]
         reveal_move(r1, s2, a2)
         reveal_move(r2, s1, a1)
@@ -144,7 +150,7 @@ def train(net, init_net, opt, samples, device, epochs, batch_size, value_coef, a
     net.eval()
 
 
-def quick_eval(net, device, teams, static, clauses, opponent, n=120, seed0=77):
+def quick_eval(net, device, teams, static, clauses, opponent, n=300, seed0=77):
     """Raw greedy win% vs `opponent` — tracks whether the DISTILLED policy itself improves."""
     pol = NetPolicy(net, device, 1)
     w = 0.0
@@ -174,6 +180,12 @@ def main() -> None:
                     help="KL(initial policy || current) trust-region weight (0 = v1's free-fall)")
     ap.add_argument("--opp-model", choices=["policy", "heuristic"], default="policy",
                     help="the opponent the lookahead assumes (policy = matched-ish to self-play)")
+    ap.add_argument("--anchor-frac", type=float, default=0.34,
+                    help="fraction of teacher games played vs the smart heuristic instead of "
+                         "search-mirror (keeps non-mirror styles in the data; v2.0's pure-mirror "
+                         "data caused a staller-shaped regression). 0 = pure self-play")
+    ap.add_argument("--eval-battles", type=int, default=300,
+                    help="games per eval line (120 had SE~4.5%% — too noisy to gate keep-best)")
     ap.add_argument("--epochs", type=int, default=4, help="distillation epochs per round")
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--lr", type=float, default=3e-4)
@@ -206,24 +218,30 @@ def main() -> None:
     smart, staller = SmartHeuristicPolicy(), StallerPolicy()
 
     def full_eval(tag):
-        ws = quick_eval(net, a.device, teams, static, a.clauses, smart)
-        wt = quick_eval(net, a.device, teams, static, a.clauses, staller, seed0=5077)
+        ws = quick_eval(net, a.device, teams, static, a.clauses, smart, n=a.eval_battles)
+        wt = quick_eval(net, a.device, teams, static, a.clauses, staller, n=a.eval_battles, seed0=5077)
         print(f"  {tag}: raw greedy vs smart {ws*100:.1f}%  vs staller {wt*100:.1f}%")
         return (ws + wt) / 2
 
     print(f"expert iteration v2: rounds={a.rounds} games/round={a.games} rollouts={a.rollouts} "
           f"top-k={a.top_k} tau={a.tau} anchor={a.anchor_coef} opp-model={a.opp_model} "
-          f"clauses={'on' if a.clauses else 'off'}  teams={'gen' if a.gen_teams else len(teams)}")
+          f"anchor-frac={a.anchor_frac} clauses={'on' if a.clauses else 'off'}  "
+          f"teams={'gen' if a.gen_teams else len(teams)}")
     best = full_eval("init")
     base = 1
     for r in range(a.rounds):
         samples: list = []
-        for _ in range(a.games):
+        n_anchor = 0
+        for gi in range(a.games):
             t1, t2 = pick(), pick()
+            anchor_game = (gi % max(round(1 / a.anchor_frac), 1) == 0) if a.anchor_frac > 0 else False
+            n_anchor += 1 if anchor_game else 0
             samples += generate_game(net, opp_model, t1, t2, static, base, a.device,
-                                     a.rollouts, a.clauses, a.turn_limit, a.top_k)
+                                     a.rollouts, a.clauses, a.turn_limit, a.top_k,
+                                     opp_policy=smart if anchor_game else None)
             base += 1
-        print(f"\nround {r}: {len(samples)} decisions from {a.games} gated-search self-play games")
+        print(f"\nround {r}: {len(samples)} decisions from {a.games} gated-search games "
+              f"({n_anchor} vs the smart anchor, rest self-play)")
         train(net, init_net, opt, samples, a.device, a.epochs, a.batch, a.value_coef,
               a.anchor_coef, a.tau)
         torch.save(net.state_dict(), out / f"ei_round{r}.pt")
