@@ -71,22 +71,18 @@ def _playout_value(c, player, net, rollout_policy, static, my_spec, opp_spec, de
     return 1.0 if win else 0.0
 
 
-def search_action_index(battle, player, net, opp_model, static, my_spec, opp_spec,
-                        reveal=None, device="cpu", rollouts: int = 3, rng=None,
-                        leaf: str = "value", rollout_policy=None, rollout_cap: int = 150,
-                        state=None, top_k: int = 0) -> int:
-    """Best action index for `player` by 1-ply lookahead. `leaf="value"` scores the rolled-forward
-    state with the value head (fast); `leaf="rollout"` plays it out to terminal with `rollout_policy`
-    (deeper, slower). Opponent modelled by `opp_model`; transitions averaged over `rollouts`.
-
-    `top_k > 0` enables POLICY-PRIOR gating: only the policy's top-k actions for `state` (the
-    pre-built BattleState for `player`; built here if not passed) are searched. The policy proposes,
-    the value head disposes — policy-learned discipline transfers into search instead of being
-    bypassed by it. `top_k=0` keeps the original search-everything behaviour."""
+def search_action_values(battle, player, net, opp_model, static, my_spec, opp_spec,
+                         reveal=None, device="cpu", rollouts: int = 3, rng=None,
+                         leaf: str = "value", rollout_policy=None, rollout_cap: int = 150,
+                         state=None, top_k: int = 0) -> tuple[list[int], list[float]]:
+    """Per-candidate 1-ply search values for `player`: (candidate action indices, mean leaf values).
+    The full Q-vector — expert iteration distils the whole distribution, not just the argmax.
+    `search_action_index` is the argmax wrapper. RNG consumption order is identical to the original
+    implementation, so prior measurements reproduce exactly."""
     rng = rng or _random
     n = len(battle.choices(player))
     if n <= 1:
-        return 0
+        return [0], [0.0]
     candidates = list(range(n))
     if top_k and top_k < n:
         if state is None:
@@ -101,7 +97,7 @@ def search_action_index(battle, player, net, opp_model, static, my_spec, opp_spe
     if opp_idx >= len(battle.choices(1 - player)):
         opp_idx = 0
 
-    best_i, best_v = candidates[0], float("-inf")
+    values: list[float] = []
     for i in candidates:
         total = 0.0
         for _ in range(rollouts):
@@ -119,10 +115,30 @@ def search_action_index(battle, player, net, opp_model, static, my_spec, opp_spe
                                          reveal=copy.deepcopy(reveal) if reveal is not None else None,
                                          opp_team=opp_spec)  # deepcopy: don't leak future reveals
                 total += _value(net, leaf_state, device)
-        v = total / rollouts
-        if v > best_v:
-            best_i, best_v = i, v
-    return best_i
+        values.append(total / rollouts)
+    return candidates, values
+
+
+def search_action_index(battle, player, net, opp_model, static, my_spec, opp_spec,
+                        reveal=None, device="cpu", rollouts: int = 3, rng=None,
+                        leaf: str = "value", rollout_policy=None, rollout_cap: int = 150,
+                        state=None, top_k: int = 0) -> int:
+    """Best action index for `player` by 1-ply lookahead (argmax of `search_action_values`).
+    `leaf="value"` scores the rolled-forward state with the value head (fast); `leaf="rollout"`
+    plays it out to terminal with `rollout_policy` (deeper, slower). Opponent modelled by
+    `opp_model`; transitions averaged over `rollouts`.
+
+    `top_k > 0` enables POLICY-PRIOR gating: only the policy's top-k actions for `state` (the
+    pre-built BattleState for `player`; built here if not passed) are searched. The policy proposes,
+    the value head disposes — policy-learned discipline transfers into search instead of being
+    bypassed by it. `top_k=0` keeps the original search-everything behaviour."""
+    candidates, values = search_action_values(
+        battle, player, net, opp_model, static, my_spec, opp_spec,
+        reveal=reveal, device=device, rollouts=rollouts, rng=rng,
+        leaf=leaf, rollout_policy=rollout_policy, rollout_cap=rollout_cap,
+        state=state, top_k=top_k)
+    best = max(range(len(values)), key=values.__getitem__)  # first-max tie-break, as before
+    return candidates[best]
 
 
 def selfplay_search_battle(net, opp_model, team1, team2, static, seed, clauses: bool = False,
