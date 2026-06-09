@@ -98,6 +98,33 @@ def search_action_index(battle, player, net, opp_model, static, my_spec, opp_spe
     return best_i
 
 
+def selfplay_search_battle(net, opp_model, team1, team2, static, seed, clauses: bool = False,
+                           turn_limit: int = 300, device: str = "cpu", rollouts: int = 3, rng=None):
+    """Both sides choose moves by search with the same `net`. Returns the ce.Battle. The strong-judge
+    battle for team evaluation — each team is piloted as well as value-head lookahead can manage, so
+    a team's win-rate reflects its strength under a stronger judge than the raw greedy policy."""
+    spec1 = [(s, list(m)) for s, m in team1]
+    spec2 = [(s, list(m)) for s, m in team2]
+    battle = ce.make_battle(spec1, spec2, seed)
+    if clauses:
+        battle.set_clauses(True)
+    r1, r2 = Reveal(), Reveal()
+    turns = 0
+    while battle.result() == ce.Result.Ongoing and turns < turn_limit:
+        turns += 1
+        s1 = build_state(battle, 0, spec1, static, "ss", reveal=r1, opp_team=spec2)
+        s2 = build_state(battle, 1, spec2, static, "ss_o", reveal=r2, opp_team=spec1)
+        i1 = search_action_index(battle, 0, net, opp_model, static, spec1, spec2,
+                                 reveal=r1, device=device, rollouts=rollouts, rng=rng)
+        i2 = search_action_index(battle, 1, net, opp_model, static, spec2, spec1,
+                                 reveal=r2, device=device, rollouts=rollouts, rng=rng)
+        a1, a2 = s1.available_actions[i1], s2.available_actions[i2]
+        reveal_move(r1, s2, a2)
+        reveal_move(r2, s1, a1)
+        battle.step(battle.choices(0)[a1.index], battle.choices(1)[a2.index])
+    return battle
+
+
 def play_search_battle(net, opp_policy, opp_model, team1, team2, static, seed,
                        tag: str = "srch", turn_limit: int = 1000, clauses: bool = False,
                        device: str = "cpu", rollouts: int = 3, rng=None,

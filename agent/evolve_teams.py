@@ -37,9 +37,18 @@ import torch
 from cinnabar import movesets
 from cinnabar.engine_cpp import StaticData, load_teams, play_battle
 from cinnabar.policy import SmartHeuristicPolicy
+from cinnabar.search import selfplay_search_battle
 from ladder import _load_net
 
 import cinnabar_engine as ce  # noqa: E402  (only importable after engine_cpp sets the path)
+
+
+class SearchPilot:
+    """A pilot that plays by decision-time search (the +27% judge). Handled specially in _winrate,
+    since search needs the live engine battle, not just a BattleState."""
+
+    def __init__(self, net, opp_model, rollouts, device):
+        self.net, self.opp_model, self.rollouts, self.device = net, opp_model, rollouts, device
 
 REPO_TEAMS = Path(__file__).resolve().parent.parent / "teams"
 Team = list  # [(species, [moves]), ...]
@@ -117,8 +126,13 @@ def _winrate(team, pol, anchor, static, games, seed, clauses, turn_limit):
         opp = random.choice(anchor)
         lead = seed % 2 == 0  # does `team` lead (P1)?
         p1t, p2t = (team, opp) if lead else (opp, team)
-        r = play_battle(pol, pol, p1t, p2t, static, seed, tag=f"ev{seed}",
-                        turn_limit=turn_limit, clauses=clauses).result()
+        if isinstance(pol, SearchPilot):
+            r = selfplay_search_battle(pol.net, pol.opp_model, p1t, p2t, static, seed,
+                                       clauses=clauses, turn_limit=turn_limit, device=pol.device,
+                                       rollouts=pol.rollouts).result()
+        else:
+            r = play_battle(pol, pol, p1t, p2t, static, seed, tag=f"ev{seed}",
+                            turn_limit=turn_limit, clauses=clauses).result()
         if r in (ce.Result.Tie, ce.Result.Ongoing):
             w += 0.5
         elif (r == ce.Result.P1Win) == lead:  # the side `team` played on won
@@ -147,7 +161,8 @@ def _summary(team: Team) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Evolve Gen 1 OU teams vs a meta anchor, panel-judged.")
     ap.add_argument("--ckpt", default=None, help="pilot net checkpoint (required if 'net' in --pilots)")
-    ap.add_argument("--pilots", default="net,heuristic", help="comma list of pilots: net, heuristic")
+    ap.add_argument("--pilots", default="net,heuristic", help="comma list of pilots: net, heuristic, search")
+    ap.add_argument("--rollouts", type=int, default=3, help="search rollouts per action (for the 'search' pilot)")
     ap.add_argument("--hidden", type=int, default=128)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--anchor-dir", default=str(REPO_TEAMS), help="fixed reference teams (fitness opponents)")
@@ -182,8 +197,13 @@ def main() -> None:
             pilots.append(("net", _load_net(a.ckpt, a.hidden, a.device, 1)))
         elif nm == "heuristic":
             pilots.append(("heuristic", SmartHeuristicPolicy()))
+        elif nm == "search":
+            if not a.ckpt:
+                raise SystemExit("--pilots includes 'search' but no --ckpt was given")
+            net = _load_net(a.ckpt, a.hidden, a.device, 1).net
+            pilots.append(("search", SearchPilot(net, SmartHeuristicPolicy(), a.rollouts, a.device)))
         else:
-            raise SystemExit(f"unknown pilot '{nm}' (use net / heuristic)")
+            raise SystemExit(f"unknown pilot '{nm}' (use net / heuristic / search)")
     if not pilots:
         raise SystemExit("no pilots selected")
 
