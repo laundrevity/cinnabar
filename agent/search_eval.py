@@ -38,9 +38,11 @@ def main() -> None:
     ap.add_argument("--rollouts", type=int, default=3, help="dice samples per action in the lookahead")
     ap.add_argument("--leaf", choices=["value", "rollout"], default="value",
                     help="value: score the leaf with the value head (fast); rollout: play to terminal (deep, slow)")
+    ap.add_argument("--top-k", type=int, default=0,
+                    help="policy-prior gating: search only the policy's top-k actions (0 = search all)")
     ap.add_argument("--sweep", action="store_true",
-                    help="sweep rollouts {1,3,6} value-leaf + a rollout-leaf config to map the headroom "
-                         "(slow — use a small --battles, e.g. 30)")
+                    help="sweep rollouts {1,3,6} value-leaf, a rollout-leaf config, and top-k {3,4} "
+                         "to map the headroom (slow — use a small --battles, e.g. 30)")
     ap.add_argument("--opponent", choices=["staller", "smart"], default="staller")
     ap.add_argument("--hidden", type=int, default=128)
     ap.add_argument("--device", default="cpu")
@@ -67,26 +69,30 @@ def main() -> None:
                                       turn_limit=a.turn_limit, clauses=a.clauses).result())
                 for t1, t2, s in matchups)
 
-    def eval_search(rollouts, leaf):
+    def eval_search(rollouts, leaf, top_k):
         w = 0.0
         stats: dict = {}
         rp = net_policy if leaf == "rollout" else None
         for t1, t2, s in matchups:
             r = play_search_battle(net, opp, opp_model, t1, t2, static, s, tag=f"s{s}",
                                    turn_limit=a.turn_limit, clauses=a.clauses, device=a.device,
-                                   rollouts=rollouts, leaf=leaf, rollout_policy=rp, stats=stats).result()
+                                   rollouts=rollouts, leaf=leaf, rollout_policy=rp, stats=stats,
+                                   top_k=top_k).result()
             w += _p1_score(r)
         return w, stats
 
     n = a.battles
     print(f"\n{Path(a.ckpt).name} vs {a.opponent} — {n} paired battles, clauses {'on' if a.clauses else 'off'}\n")
-    print(f"  raw policy win%     {raw_w / n * 100:5.1f}   (re-slept 15.3% in the diagnostic)\n")
-    configs = [(1, "value"), (3, "value"), (6, "value"), (3, "rollout")] if a.sweep else [(a.rollouts, a.leaf)]
-    print(f"  {'config':16s} {'search%':>8s} {'lift':>7s}  re-slept")
-    for rollouts, leaf in configs:
-        w, stats = eval_search(rollouts, leaf)
+    print(f"  raw policy win%     {raw_w / n * 100:5.1f}\n")
+    configs = ([(1, "value", 0), (3, "value", 0), (6, "value", 0), (3, "rollout", 0),
+                (3, "value", 3), (3, "value", 4)]
+               if a.sweep else [(a.rollouts, a.leaf, a.top_k)])
+    print(f"  {'config':22s} {'search%':>8s} {'lift':>7s}  re-slept")
+    for rollouts, leaf, top_k in configs:
+        w, stats = eval_search(rollouts, leaf, top_k)
         rs = f"{stats.get('reslept', 0)}/{stats.get('tempt', 0)}"
-        print(f"  r={rollouts} leaf={leaf:7s} {w / n * 100:7.1f}% {(w - raw_w) / n * 100:+6.1f}%   {rs}")
+        gate = f" k={top_k}" if top_k else " k=all"
+        print(f"  r={rollouts} leaf={leaf:7s}{gate} {w / n * 100:7.1f}% {(w - raw_w) / n * 100:+6.1f}%   {rs}")
 
 
 if __name__ == "__main__":

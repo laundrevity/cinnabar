@@ -45,10 +45,12 @@ import cinnabar_engine as ce  # noqa: E402  (only importable after engine_cpp se
 
 class SearchPilot:
     """A pilot that plays by decision-time search (the +27% judge). Handled specially in _winrate,
-    since search needs the live engine battle, not just a BattleState."""
+    since search needs the live engine battle, not just a BattleState. `top_k > 0` gates search
+    candidates by the policy prior (transfers policy discipline, e.g. clause-fail avoidance)."""
 
-    def __init__(self, net, opp_model, rollouts, device):
+    def __init__(self, net, opp_model, rollouts, device, top_k: int = 0):
         self.net, self.opp_model, self.rollouts, self.device = net, opp_model, rollouts, device
+        self.top_k = top_k
 
 REPO_TEAMS = Path(__file__).resolve().parent.parent / "teams"
 Team = list  # [(species, [moves]), ...]
@@ -137,7 +139,7 @@ def _winrate(team, pol, matchups, static, clauses, turn_limit):
         if isinstance(pol, SearchPilot):
             r = selfplay_search_battle(pol.net, pol.opp_model, p1t, p2t, static, seed,
                                        clauses=clauses, turn_limit=turn_limit, device=pol.device,
-                                       rollouts=pol.rollouts).result()
+                                       rollouts=pol.rollouts, top_k=pol.top_k).result()
         else:
             r = play_battle(pol, pol, p1t, p2t, static, seed, tag=f"ev{seed}",
                             turn_limit=turn_limit, clauses=clauses).result()
@@ -169,6 +171,9 @@ def main() -> None:
     ap.add_argument("--ckpt", default=None, help="pilot net checkpoint (required if 'net' in --pilots)")
     ap.add_argument("--pilots", default="net,heuristic", help="comma list of pilots: net, heuristic, search")
     ap.add_argument("--rollouts", type=int, default=3, help="search rollouts per action (for the 'search' pilot)")
+    ap.add_argument("--top-k", type=int, default=0,
+                    help="policy-prior gating for the 'search' pilot: search only the policy's top-k "
+                         "actions (0 = all; transfers clause discipline into the judge + faster)")
     ap.add_argument("--hidden", type=int, default=128)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--anchor-dir", default=str(REPO_TEAMS), help="fixed reference teams (fitness opponents)")
@@ -207,7 +212,8 @@ def main() -> None:
             if not a.ckpt:
                 raise SystemExit("--pilots includes 'search' but no --ckpt was given")
             net = _load_net(a.ckpt, a.hidden, a.device, 1).net
-            pilots.append(("search", SearchPilot(net, SmartHeuristicPolicy(), a.rollouts, a.device)))
+            pilots.append(("search", SearchPilot(net, SmartHeuristicPolicy(), a.rollouts, a.device,
+                                                 top_k=a.top_k)))
         else:
             raise SystemExit(f"unknown pilot '{nm}' (use net / heuristic / search)")
     if not pilots:

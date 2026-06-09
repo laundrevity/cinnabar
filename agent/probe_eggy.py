@@ -205,6 +205,8 @@ def main() -> None:
                     help="comma-set of raw,search,selfsearch (selfsearch = both sides search-piloted "
                          "— the EXACT evolve_teams fitness judge; --opponent is ignored for it)")
     ap.add_argument("--rollouts", type=int, default=3)
+    ap.add_argument("--top-k", type=int, default=0,
+                    help="policy-prior gating for the search/selfsearch pilots (0 = search all actions)")
     ap.add_argument("--opponent", choices=["smart", "staller"], default="smart")
     ap.add_argument("--hidden", type=int, default=128)
     ap.add_argument("--device", default="cpu")
@@ -256,12 +258,12 @@ def main() -> None:
                     bat = selfplay_search_battle(net, opp_model, team, opp_team, static, seed,
                                                  clauses=a.clauses, turn_limit=a.turn_limit,
                                                  device=a.device, rollouts=a.rollouts,
-                                                 observer=tracker)
+                                                 observer=tracker, top_k=a.top_k)
                 else:
                     bat = play_search_battle(net, opp, opp_model, team, opp_team, static, seed,
                                              tag=f"pe{seed}", turn_limit=a.turn_limit,
                                              clauses=a.clauses, device=a.device,
-                                             rollouts=a.rollouts, observer=tracker)
+                                             rollouts=a.rollouts, observer=tracker, top_k=a.top_k)
                 tracker.finish_battle(bat)
                 wins += _p1_score(bat.result())
             wr = wins / a.battles

@@ -22,7 +22,7 @@ import random as _random
 
 import torch
 
-from .encoding import encode_global
+from .encoding import encode_global, featurize
 from .engine_cpp import Reveal, build_state, reveal_move
 
 import cinnabar_engine as ce  # noqa: E402  (importable only after engine_cpp set the path)
@@ -32,6 +32,20 @@ import cinnabar_engine as ce  # noqa: E402  (importable only after engine_cpp se
 def _value(net, state, device: str) -> float:
     g = torch.tensor(encode_global(state), dtype=torch.float32, device=device)
     return float(net.value(g))
+
+
+@torch.no_grad()
+def _top_k_candidates(net, state, k: int, device: str) -> list[int]:
+    """The k action indices the POLICY rates highest (AlphaZero-style prior gating). Knowledge the
+    policy has learned (e.g. 'this sleep will fail under the clause') prunes candidates the value
+    head can't tell apart — without it, 1-ply value-leaf search bypasses the policy entirely and
+    un-learns its discipline. Also a speedup: fewer candidates = fewer clones."""
+    g_feats, a_feats = featurize(state)
+    g = torch.tensor(g_feats, dtype=torch.float32, device=device)
+    a = torch.tensor(a_feats, dtype=torch.float32, device=device)
+    logits = net.score_actions(g, a)
+    k = min(k, logits.shape[0])
+    return torch.topk(logits, k).indices.tolist()
 
 
 @torch.no_grad()
@@ -59,14 +73,27 @@ def _playout_value(c, player, net, rollout_policy, static, my_spec, opp_spec, de
 
 def search_action_index(battle, player, net, opp_model, static, my_spec, opp_spec,
                         reveal=None, device="cpu", rollouts: int = 3, rng=None,
-                        leaf: str = "value", rollout_policy=None, rollout_cap: int = 150) -> int:
+                        leaf: str = "value", rollout_policy=None, rollout_cap: int = 150,
+                        state=None, top_k: int = 0) -> int:
     """Best action index for `player` by 1-ply lookahead. `leaf="value"` scores the rolled-forward
     state with the value head (fast); `leaf="rollout"` plays it out to terminal with `rollout_policy`
-    (deeper, slower). Opponent modelled by `opp_model`; transitions averaged over `rollouts`."""
+    (deeper, slower). Opponent modelled by `opp_model`; transitions averaged over `rollouts`.
+
+    `top_k > 0` enables POLICY-PRIOR gating: only the policy's top-k actions for `state` (the
+    pre-built BattleState for `player`; built here if not passed) are searched. The policy proposes,
+    the value head disposes — policy-learned discipline transfers into search instead of being
+    bypassed by it. `top_k=0` keeps the original search-everything behaviour."""
     rng = rng or _random
     n = len(battle.choices(player))
     if n <= 1:
         return 0
+    candidates = list(range(n))
+    if top_k and top_k < n:
+        if state is None:
+            state = build_state(battle, player, my_spec, static, "srch_pri",
+                                reveal=copy.deepcopy(reveal) if reveal is not None else None,
+                                opp_team=opp_spec)
+        candidates = _top_k_candidates(net, state, top_k, device)
 
     # Model the opponent's move once (a point estimate; the agent can't see the real opponent policy).
     opp_state = build_state(battle, 1 - player, opp_spec, static, "srch_o", reveal=None, opp_team=my_spec)
@@ -74,8 +101,8 @@ def search_action_index(battle, player, net, opp_model, static, my_spec, opp_spe
     if opp_idx >= len(battle.choices(1 - player)):
         opp_idx = 0
 
-    best_i, best_v = 0, float("-inf")
-    for i in range(n):
+    best_i, best_v = candidates[0], float("-inf")
+    for i in candidates:
         total = 0.0
         for _ in range(rollouts):
             c = battle.clone()
@@ -100,7 +127,7 @@ def search_action_index(battle, player, net, opp_model, static, my_spec, opp_spe
 
 def selfplay_search_battle(net, opp_model, team1, team2, static, seed, clauses: bool = False,
                            turn_limit: int = 300, device: str = "cpu", rollouts: int = 3, rng=None,
-                           observer=None):
+                           observer=None, top_k: int = 0):
     """Both sides choose moves by search with the same `net`. Returns the ce.Battle. The strong-judge
     battle for team evaluation — each team is piloted as well as value-head lookahead can manage, so
     a team's win-rate reflects its strength under a stronger judge than the raw greedy policy.
@@ -118,9 +145,11 @@ def selfplay_search_battle(net, opp_model, team1, team2, static, seed, clauses: 
         s1 = build_state(battle, 0, spec1, static, "ss", reveal=r1, opp_team=spec2)
         s2 = build_state(battle, 1, spec2, static, "ss_o", reveal=r2, opp_team=spec1)
         i1 = search_action_index(battle, 0, net, opp_model, static, spec1, spec2,
-                                 reveal=r1, device=device, rollouts=rollouts, rng=rng)
+                                 reveal=r1, device=device, rollouts=rollouts, rng=rng,
+                                 state=s1, top_k=top_k)
         i2 = search_action_index(battle, 1, net, opp_model, static, spec2, spec1,
-                                 reveal=r2, device=device, rollouts=rollouts, rng=rng)
+                                 reveal=r2, device=device, rollouts=rollouts, rng=rng,
+                                 state=s2, top_k=top_k)
         a1, a2 = s1.available_actions[i1], s2.available_actions[i2]
         if observer is not None:
             observer(battle, s1, a1)
@@ -134,7 +163,7 @@ def play_search_battle(net, opp_policy, opp_model, team1, team2, static, seed,
                        tag: str = "srch", turn_limit: int = 1000, clauses: bool = False,
                        device: str = "cpu", rollouts: int = 3, rng=None,
                        leaf: str = "value", rollout_policy=None, stats: dict | None = None,
-                       observer=None):
+                       observer=None, top_k: int = 0):
     """p1 plays by decision-time search (value head `net` + `opp_model` for the lookahead); p2 plays
     `opp_policy`. `stats`, if given, accumulates sleep-clause discipline. `observer`, if given, is
     called pre-step each turn as observer(battle, s1, a1) — a diagnostics hook (must not mutate).
@@ -152,7 +181,8 @@ def play_search_battle(net, opp_policy, opp_model, team1, team2, static, seed,
         s2 = build_state(battle, 1, spec2, static, tag + "_opp", reveal=r2, opp_team=spec1)
         i1 = search_action_index(battle, 0, net, opp_model, static, spec1, spec2,
                                  reveal=r1, device=device, rollouts=rollouts, rng=rng,
-                                 leaf=leaf, rollout_policy=rollout_policy)
+                                 leaf=leaf, rollout_policy=rollout_policy,
+                                 state=s1, top_k=top_k)
         a1 = s1.available_actions[i1]
         if stats is not None and any(getattr(x, "effect_status", "") == "SLP" for x in s1.available_actions) \
                 and any(m.status == "SLP" for m in s1.opponent_team):
