@@ -177,3 +177,60 @@ class SmartHeuristicPolicy(Policy):
             return None
         return min(switches, key=lambda s: ((s.incoming_multiplier or 1.0),
                                             -(s.target_hp_fraction or 0.0)))
+
+
+class StallerPolicy(SmartHeuristicPolicy):
+    """A patient paralysis + recovery staller — the human style that beats the RL agent but that
+    nothing in its training reproduces (the league is past selves; the heuristic just attacks).
+
+    It spreads paralysis proactively (not only when slower), recovers to stay healthy rather than
+    only in emergencies, grinds with its best hit, pivots off a losing matchup, and respects Sleep
+    Clause (never re-sleeps). Purpose: a diagnostic opponent to test whether the net escapes a losing
+    attrition fight — and, if it folds, a training opponent that finally punishes the blind spot.
+    """
+
+    RECOVER_BELOW = 0.65
+
+    def select_action(self, state: BattleState) -> Action:
+        acts = state.available_actions
+        if not acts:
+            raise ValueError("StallerPolicy called with no available actions")
+        moves = [a for a in acts if a.type == ActionType.MOVE]
+        switches = [a for a in acts if a.type == ActionType.SWITCH]
+        if not moves:
+            return self._best_switch(switches) or acts[0]
+
+        active, opp = state.active, state.opponent_active
+        best = max(moves, key=lambda a: self._dmg(a, active))
+
+        # Close out only when a real KO is on the table.
+        if opp is not None and opp.hp_fraction < 0.30 and self._dmg(best, active) >= 70:
+            return best
+
+        # Sleep a healthy un-statused foe, but never re-sleep into Sleep Clause.
+        foe_asleep = any(m.status == "SLP" for m in state.opponent_team)
+        if opp is not None and not opp.status and opp.hp_fraction > 0.5 and not foe_asleep:
+            slp = self._pick(moves, self.SLEEP_MOVES, min_acc=0.55)
+            if slp is not None:
+                return slp
+
+        # Spread paralysis proactively — the core staller lever (SmartHeuristic only paralyses when slower).
+        if opp is not None and not opp.status:
+            par = self._pick(moves, self.PARA_MOVES, need_effective=True)
+            if par is not None:
+                return par
+
+        # Recover early to win the long game, not just to avoid dying.
+        if active is not None and active.hp_fraction < self.RECOVER_BELOW:
+            heal = self._pick(moves, self.HEAL_MOVES)
+            if heal is not None:
+                return heal
+
+        # Pivot off a losing matchup (best hit resisted/weak) to a safer body.
+        base = best.base_power or 0.0
+        if base and self._dmg(best, active) <= 0.5 * base and switches:
+            sw = self._best_switch(switches)
+            if sw is not None and (sw.incoming_multiplier or 1.0) < 1.0:
+                return sw
+
+        return best

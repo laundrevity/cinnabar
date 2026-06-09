@@ -24,7 +24,7 @@ from pathlib import Path
 import torch
 
 from cinnabar.engine_cpp import StaticData, load_teams, parse_team, play_battle
-from cinnabar.policy import Policy, SmartHeuristicPolicy
+from cinnabar.policy import Policy, SmartHeuristicPolicy, StallerPolicy
 from cinnabar.state import ActionType
 from ladder import _load_net
 
@@ -185,6 +185,16 @@ def main() -> None:
     n_ab = max(60, a.battles // 2)
     net_def = pilot_winrate(net, def_team, smart, teams, n_ab, static, a.clauses, a.turn_limit, 10_000)
     smt_def = pilot_winrate(smart, def_team, smart, teams, n_ab, static, a.clauses, a.turn_limit, 10_000)
+    # 2b. vs a PATIENT STALLER — the human style nothing in training reproduces. If the net wins far
+    # less here than vs the (attacking) heuristic, it can't handle patient paralysis+recovery stall.
+    cnet2 = Counting(net)
+    win_st, turns_st, stall_st = behavior(cnet2, StallerPolicy(), teams, a.battles, static,
+                                          a.clauses, a.turn_limit, 5_000)
+    print(f"\n  vs a patient staller (paralysis + recovery + pivot):")
+    print(f"    net win%        {win_st*100:5.1f}%   (vs {win*100:.1f}% against the attacking heuristic)")
+    print(f"    net switch rate {cnet2.switch_rate*100:5.1f}%")
+    print(f"    avg game length {turns_st:5.1f} turns, hit turn limit {stall_st*100:.1f}%")
+
     print(f"\n  piloting the SAME defensive team vs smart ({n_ab} battles, identical matchups):")
     print(f"    net pilot       {net_def*100:5.1f}%")
     print(f"    smart pilot     {smt_def*100:5.1f}%")
