@@ -165,3 +165,39 @@ def test_speed_advantage_feature():
         active=ActivePokemon("Tauros", 1.0, status="PAR", types=("NORMAL",), speed=110),
         opponent_active=ActivePokemon("Snorlax", 1.0, types=("NORMAL",), speed=30))
     assert encode_global(para)[20] == 0.0
+
+
+def _status_move(effect_status, category="STATUS", effect_chance=1.0):
+    return Action(0, ActionType.MOVE, "statusmove", move_id="statusmove", base_power=0,
+                  move_type="NORMAL", category=category,
+                  effect_status=effect_status, effect_chance=effect_chance)
+
+
+def test_will_fail_on_already_statused_target():
+    """A primary status move into an already-statused active is a guaranteed no-op (Gen 1)."""
+    par_foe = _state(opponent=ActivePokemon("Exeggutor", 1.0, status="PAR", types=("GRASS", "PSYCHIC")))
+    assert encode_action(_status_move("PAR"), par_foe)[-1] == 1.0
+    frz_foe = _state(opponent=ActivePokemon("Chansey", 0.9, status="FRZ", types=("NORMAL",)))
+    assert encode_action(_status_move("PAR"), frz_foe)[-1] == 1.0
+    clean_foe = _state(opponent=ActivePokemon("Exeggutor", 1.0, types=("GRASS", "PSYCHIC")))
+    assert encode_action(_status_move("PAR"), clean_foe)[-1] == 0.0
+
+
+def test_will_fail_not_for_secondary_status_moves():
+    """Body Slam still deals damage into a paralyzed target — only pure status moves fail."""
+    par_foe = _state(opponent=ActivePokemon("Snorlax", 1.0, status="PAR", types=("NORMAL",)))
+    body_slam = Action(0, ActionType.MOVE, "bodyslam", move_id="bodyslam", base_power=85,
+                       move_type="NORMAL", category="PHYSICAL",
+                       effect_status="PAR", effect_chance=0.3)
+    assert encode_action(body_slam, par_foe)[-1] == 0.0
+
+
+def test_will_fail_on_spent_sleep_clause():
+    """A new sleep fails while any foe is already asleep (Sleep Clause), even on a clean target."""
+    state = _state(opponent=ActivePokemon("Tauros", 1.0, types=("NORMAL",)))
+    state.opponent_team = [TeamMon("Snorlax", 1.0, False, status="SLP"),
+                           TeamMon("Tauros", 1.0, False, active=True)]
+    assert encode_action(_status_move("SLP"), state)[-1] == 1.0
+    # no foe asleep -> sleeping the clean active is fine
+    state.opponent_team = [TeamMon("Tauros", 1.0, False, active=True)]
+    assert encode_action(_status_move("SLP"), state)[-1] == 0.0

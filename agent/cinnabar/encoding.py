@@ -42,7 +42,8 @@ GLOBAL_DIM = (2 + 2 * len(STATUS_ORDER) + 2 + 4 + 1 + 12 + 12
               + TEAM_SIZE * _OPP_MON_DIM + _OPP_MOVE_DIM + 2)
 # action = move features(7) + switch-target features(3) + fixed-damage(1) + effect features(11)
 #   [status one-hot(5) + chance(1) + heals/boosts_self/lowers_foe/recharge/self_destruct(5)]
-#   + clause-fail(1): this sleep/freeze move will FAIL right now (a foe is already asleep/frozen)
+#   + will-fail(1): this status move FAILS right now (target already statused, or the
+#     Sleep/Freeze Clause is spent) — deterministic Gen 1 mechanics, handed to the net as a fact
 ACTION_DIM = 7 + 3 + 1 + 11 + 1
 
 # The status a move can inflict, encoded as a one-hot for the action features.
@@ -211,15 +212,24 @@ def encode_action(action: Action, state: BattleState) -> list[float]:
     # moves that share power/type (e.g. Recover vs Sleep Powder vs Thunder Wave vs Reflect).
     status_one_hot = [1.0 if action.effect_status == s else 0.0 for s in _EFFECT_STATUS_ORDER]
 
-    # Clause-fail: a direct, per-action signal that THIS sleep/freeze move would just fail right now
-    # because a foe is already asleep/frozen (Sleep/Freeze Clause spent). The global opp_asleep flag
-    # made the net infer this interaction and it under-learned it (15% re-sleep); this hands it the
-    # fact outright. Appended LAST so pad_checkpoint warm-starts old nets at zero contribution.
+    # Will-fail: a direct, per-action signal that THIS status move does nothing right now. Two
+    # deterministic Gen 1 reasons, same feature slot (it means "this fails", whatever the cause):
+    #   (a) the target already has a non-volatile status — a primary status move (TWave, Sleep
+    #       Powder, Toxic, ...) always fails on a statused target. Watched failure: TWave clicked
+    #       32x into a frozen Chansey / 6x into a paralyzed Eggy, throwing a won endgame.
+    #       Damaging moves with secondary status (Body Slam) still deal damage — excluded.
+    #   (b) Sleep/Freeze Clause spent: a foe is already asleep/frozen, so a NEW sleep/freeze fails
+    #       even on a clean target (the original clause-fail case, 16e5869; 15% re-sleep bug).
+    # Same slot as the trained clause-fail feature, so models_cf's learned "will_fail -> bad"
+    # weight applies to case (a) immediately; a retrain sharpens it.
     will_fail = 0.0
+    if (action.effect_status and action.category == "STATUS" and action.effect_chance >= 0.999
+            and state.opponent_active is not None and state.opponent_active.status):
+        will_fail = 1.0  # (a) target already statused
     if action.effect_status == "SLP" and any(m.status == "SLP" for m in state.opponent_team):
-        will_fail = 1.0
+        will_fail = 1.0  # (b) Sleep Clause spent
     elif action.effect_status == "FRZ" and any(m.status == "FRZ" for m in state.opponent_team):
-        will_fail = 1.0
+        will_fail = 1.0  # (b) Freeze Clause spent
 
     return [
         1.0 if is_move else 0.0,
