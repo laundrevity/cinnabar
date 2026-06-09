@@ -52,6 +52,8 @@ PYBIND11_MODULE(cinnabar_engine, m) {
         .def("step", &Battle::step, py::arg("c1"), py::arg("c2"))
         .def("result", &Battle::result)
         .def("set_clauses", &Battle::set_clauses, py::arg("on"))  // OU Sleep+Freeze Clause (training)
+        .def("clone", [](const Battle& b) { return b; })          // deep copy for decision-time search
+        .def("reseed", &Battle::reseed, py::arg("seed"))          // fresh dice for search rollouts
         .def("active_species", [](const Battle& b, int player) {
             return (player == 0 ? b.p1 : b.p2).mon().species->name;
         }, py::arg("player"))

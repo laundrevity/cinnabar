@@ -1,0 +1,35 @@
+Gengar
+- Explosion
+- Thunderbolt
+- Seismic Toss
+- Psychic
+
+Articuno
+- Blizzard
+- Rest
+- Hyper Beam
+- Ice Beam
+
+Jolteon
+- Agility
+- Thunderbolt
+- Pin Missile
+- Body Slam
+
+Hypno
+- Psychic
+- Rest
+- Thunder Wave
+- Seismic Toss
+
+Zapdos
+- Thunderbolt
+- Reflect
+- Drill Peck
+- Thunder Wave
+
+Starmie
+- Ice Beam
+- Blizzard
+- Recover
+- Psychic

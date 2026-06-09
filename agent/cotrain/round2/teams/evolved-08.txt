@@ -1,0 +1,35 @@
+Tauros
+- Fire Blast
+- Thunderbolt
+- Earthquake
+- Body Slam
+
+Jolteon
+- Body Slam
+- Thunder Wave
+- Double Kick
+- Thunderbolt
+
+Starmie
+- Blizzard
+- Surf
+- Thunderbolt
+- Psychic
+
+Rhydon
+- Take Down
+- Body Slam
+- Earthquake
+- Substitute
+
+Snorlax
+- Hyper Beam
+- Reflect
+- Self-Destruct
+- Body Slam
+
+Articuno
+- Hyper Beam
+- Blizzard
+- Reflect
+- Ice Beam

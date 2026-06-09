@@ -1,0 +1,35 @@
+Jolteon
+- Pin Missile
+- Body Slam
+- Thunder Wave
+- Thunderbolt
+
+Articuno
+- Hyper Beam
+- Agility
+- Blizzard
+- Ice Beam
+
+Hypno
+- Counter
+- Psychic
+- Reflect
+- Hypnosis
+
+Rhydon
+- Hyper Beam
+- Body Slam
+- Earthquake
+- Take Down
+
+Starmie
+- Blizzard
+- Ice Beam
+- Thunder Wave
+- Recover
+
+Gengar
+- Mega Drain
+- Hypnosis
+- Confuse Ray
+- Explosion

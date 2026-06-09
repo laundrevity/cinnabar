@@ -167,6 +167,10 @@ struct Battle {
     // that a second foe-inflicted sleep/freeze fails — instead of spamming sleep as a free win.
     void set_clauses(bool on) { p1.clauses = p2.clauses = on; }
 
+    // Reseed the internal PRNG (used only on *clones* during decision-time search, so rollouts draw
+    // fresh dice instead of replaying the live game's RNG — the real battle's rng is never touched).
+    void reseed(uint64_t s) { rng = RNG(s); }
+
     std::vector<Choice> choices(int player) const;  // 0 = p1, 1 = p2
     Result step(const Choice& c1, const Choice& c2);
     Result result() const;

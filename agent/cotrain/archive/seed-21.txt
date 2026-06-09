@@ -1,0 +1,35 @@
+Tauros
+- Body Slam
+- Blizzard
+- Fire Blast
+- Thunderbolt
+
+Hypno
+- Thunder Wave
+- Seismic Toss
+- Psychic
+- Reflect
+
+Starmie
+- Surf
+- Recover
+- Thunder Wave
+- Thunderbolt
+
+Snorlax
+- Surf
+- Counter
+- Reflect
+- Hyper Beam
+
+Lapras
+- Confuse Ray
+- Thunderbolt
+- Sing
+- Body Slam
+
+Alakazam
+- Counter
+- Recover
+- Seismic Toss
+- Reflect

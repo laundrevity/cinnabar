@@ -1,0 +1,35 @@
+Chansey
+- Psychic
+- Thunderbolt
+- Thunder Wave
+- Counter
+
+Cloyster
+- Hyper Beam
+- Explosion
+- Clamp
+- Surf
+
+Starmie
+- Thunderbolt
+- Thunder Wave
+- Surf
+- Psychic
+
+Moltres
+- Fire Spin
+- Hyper Beam
+- Fire Blast
+- Agility
+
+Zapdos
+- Drill Peck
+- Thunderbolt
+- Agility
+- Reflect
+
+Tauros
+- Earthquake
+- Hyper Beam
+- Blizzard
+- Take Down

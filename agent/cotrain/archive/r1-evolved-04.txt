@@ -1,0 +1,35 @@
+Rhydon
+- Rock Slide
+- Earthquake
+- Take Down
+- Substitute
+
+Lapras
+- Thunderbolt
+- Body Slam
+- Ice Beam
+- Surf
+
+Snorlax
+- Surf
+- Body Slam
+- Ice Beam
+- Blizzard
+
+Zapdos
+- Thunderbolt
+- Reflect
+- Light Screen
+- Drill Peck
+
+Starmie
+- Thunderbolt
+- Ice Beam
+- Thunder Wave
+- Surf
+
+Jolteon
+- Body Slam
+- Pin Missile
+- Double Kick
+- Thunderbolt

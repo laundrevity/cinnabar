@@ -1,0 +1,35 @@
+Tauros
+- Thunderbolt
+- Blizzard
+- Hyper Beam
+- Earthquake
+
+Starmie
+- Ice Beam
+- Recover
+- Thunderbolt
+- Blizzard
+
+Zapdos
+- Reflect
+- Drill Peck
+- Thunderbolt
+- Thunder Wave
+
+Snorlax
+- Hyper Beam
+- Psychic
+- Blizzard
+- Rest
+
+Lapras
+- Confuse Ray
+- Blizzard
+- Rest
+- Body Slam
+
+Cloyster
+- Surf
+- Blizzard
+- Clamp
+- Explosion

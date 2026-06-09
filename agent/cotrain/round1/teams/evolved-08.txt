@@ -1,0 +1,35 @@
+Starmie
+- Ice Beam
+- Psychic
+- Recover
+- Blizzard
+
+Zapdos
+- Drill Peck
+- Agility
+- Reflect
+- Thunderbolt
+
+Jolteon
+- Thunderbolt
+- Agility
+- Pin Missile
+- Body Slam
+
+Snorlax
+- Reflect
+- Body Slam
+- Rest
+- Surf
+
+Jynx
+- Rest
+- Ice Beam
+- Counter
+- Psychic
+
+Gengar
+- Thunderbolt
+- Seismic Toss
+- Mega Drain
+- Night Shade

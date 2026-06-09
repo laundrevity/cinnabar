@@ -1,0 +1,35 @@
+Starmie
+- Blizzard
+- Thunder Wave
+- Psychic
+- Surf
+
+Tauros
+- Body Slam
+- Earthquake
+- Thunderbolt
+- Take Down
+
+Zapdos
+- Drill Peck
+- Thunderbolt
+- Light Screen
+- Thunder Wave
+
+Jolteon
+- Body Slam
+- Agility
+- Double Kick
+- Thunderbolt
+
+Exeggutor
+- Psychic
+- Leech Seed
+- Double-Edge
+- Explosion
+
+Slowbro
+- Rest
+- Amnesia
+- Ice Beam
+- Surf

@@ -1,0 +1,35 @@
+Chansey
+- Psychic
+- Toxic
+- Seismic Toss
+- Soft-Boiled
+
+Starmie
+- Surf
+- Psychic
+- Thunderbolt
+- Ice Beam
+
+Tauros
+- Fire Blast
+- Hyper Beam
+- Earthquake
+- Thunderbolt
+
+Golem
+- Rock Slide
+- Substitute
+- Earthquake
+- Body Slam
+
+Moltres
+- Agility
+- Fire Spin
+- Fire Blast
+- Reflect
+
+Alakazam
+- Counter
+- Seismic Toss
+- Reflect
+- Psychic

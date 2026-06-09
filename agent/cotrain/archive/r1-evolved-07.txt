@@ -1,0 +1,35 @@
+Zapdos
+- Light Screen
+- Thunderbolt
+- Thunder Wave
+- Drill Peck
+
+Articuno
+- Hyper Beam
+- Agility
+- Ice Beam
+- Rest
+
+Alakazam
+- Counter
+- Thunder Wave
+- Reflect
+- Psychic
+
+Hypno
+- Thunder Wave
+- Seismic Toss
+- Hypnosis
+- Psychic
+
+Snorlax
+- Surf
+- Body Slam
+- Ice Beam
+- Blizzard
+
+Rhydon
+- Earthquake
+- Body Slam
+- Substitute
+- Rock Slide

@@ -1,0 +1,35 @@
+Jolteon
+- Thunderbolt
+- Pin Missile
+- Agility
+- Thunder Wave
+
+Persian
+- Substitute
+- Bubble Beam
+- Thunderbolt
+- Hyper Beam
+
+Hypno
+- Psychic
+- Rest
+- Seismic Toss
+- Hypnosis
+
+Starmie
+- Thunder Wave
+- Ice Beam
+- Thunderbolt
+- Recover
+
+Exeggutor
+- Double-Edge
+- Stun Spore
+- Sleep Powder
+- Psychic
+
+Gengar
+- Mega Drain
+- Hypnosis
+- Night Shade
+- Thunderbolt

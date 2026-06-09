@@ -1,0 +1,35 @@
+Starmie
+- Ice Beam
+- Psychic
+- Blizzard
+- Thunderbolt
+
+Persian
+- Body Slam
+- Bubble Beam
+- Thunderbolt
+- Slash
+
+Hypno
+- Counter
+- Hypnosis
+- Seismic Toss
+- Reflect
+
+Dragonite
+- Wrap
+- Blizzard
+- Surf
+- Body Slam
+
+Tauros
+- Earthquake
+- Body Slam
+- Blizzard
+- Take Down
+
+Snorlax
+- Hyper Beam
+- Psychic
+- Reflect
+- Blizzard

@@ -1,0 +1,35 @@
+Lapras
+- Ice Beam
+- Body Slam
+- Blizzard
+- Thunderbolt
+
+Moltres
+- Fire Blast
+- Reflect
+- Agility
+- Fire Spin
+
+Zapdos
+- Drill Peck
+- Reflect
+- Thunderbolt
+- Light Screen
+
+Tauros
+- Hyper Beam
+- Thunderbolt
+- Body Slam
+- Fire Blast
+
+Snorlax
+- Rest
+- Surf
+- Counter
+- Earthquake
+
+Starmie
+- Thunder Wave
+- Ice Beam
+- Surf
+- Blizzard

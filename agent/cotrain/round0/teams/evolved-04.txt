@@ -1,0 +1,35 @@
+Tauros
+- Body Slam
+- Blizzard
+- Thunderbolt
+- Take Down
+
+Zapdos
+- Drill Peck
+- Thunderbolt
+- Light Screen
+- Agility
+
+Rhydon
+- Earthquake
+- Body Slam
+- Substitute
+- Rock Slide
+
+Starmie
+- Blizzard
+- Thunder Wave
+- Psychic
+- Thunderbolt
+
+Alakazam
+- Psychic
+- Recover
+- Thunder Wave
+- Counter
+
+Articuno
+- Hyper Beam
+- Blizzard
+- Reflect
+- Agility

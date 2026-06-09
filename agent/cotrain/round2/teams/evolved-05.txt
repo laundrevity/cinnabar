@@ -1,0 +1,35 @@
+Hypno
+- Hypnosis
+- Rest
+- Counter
+- Psychic
+
+Jolteon
+- Body Slam
+- Thunder Wave
+- Double Kick
+- Thunderbolt
+
+Gengar
+- Night Shade
+- Confuse Ray
+- Psychic
+- Seismic Toss
+
+Starmie
+- Blizzard
+- Ice Beam
+- Thunderbolt
+- Psychic
+
+Golem
+- Earthquake
+- Body Slam
+- Rock Slide
+- Take Down
+
+Alakazam
+- Reflect
+- Thunder Wave
+- Psychic
+- Counter

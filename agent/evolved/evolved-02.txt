@@ -1,0 +1,35 @@
+Lapras
+- Blizzard
+- Body Slam
+- Rest
+- Confuse Ray
+
+Articuno
+- Ice Beam
+- Rest
+- Agility
+- Blizzard
+
+Chansey
+- Ice Beam
+- Thunderbolt
+- Sing
+- Soft-Boiled
+
+Alakazam
+- Psychic
+- Recover
+- Thunder Wave
+- Seismic Toss
+
+Jynx
+- Blizzard
+- Psychic
+- Rest
+- Lovely Kiss
+
+Victreebel
+- Sleep Powder
+- Body Slam
+- Razor Leaf
+- Wrap

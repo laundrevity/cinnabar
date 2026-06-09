@@ -1,0 +1,35 @@
+Jynx
+- Rest
+- Lovely Kiss
+- Counter
+- Ice Beam
+
+Starmie
+- Blizzard
+- Thunder Wave
+- Psychic
+- Thunderbolt
+
+Zapdos
+- Drill Peck
+- Thunderbolt
+- Light Screen
+- Thunder Wave
+
+Articuno
+- Hyper Beam
+- Blizzard
+- Reflect
+- Agility
+
+Hypno
+- Psychic
+- Rest
+- Thunder Wave
+- Seismic Toss
+
+Rhydon
+- Earthquake
+- Body Slam
+- Substitute
+- Rock Slide

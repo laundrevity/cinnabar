@@ -1,0 +1,35 @@
+Chansey
+- Thunderbolt
+- Soft-Boiled
+- Seismic Toss
+- Thunder Wave
+
+Cloyster
+- Surf
+- Blizzard
+- Clamp
+- Explosion
+
+Tauros
+- Take Down
+- Blizzard
+- Body Slam
+- Fire Blast
+
+Hypno
+- Psychic
+- Reflect
+- Seismic Toss
+- Thunder Wave
+
+Jynx
+- Lovely Kiss
+- Blizzard
+- Psychic
+- Counter
+
+Snorlax
+- Body Slam
+- Psychic
+- Self-Destruct
+- Ice Beam

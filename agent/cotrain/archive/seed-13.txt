@@ -1,0 +1,35 @@
+Rhydon
+- Take Down
+- Earthquake
+- Substitute
+- Hyper Beam
+
+Articuno
+- Rest
+- Reflect
+- Ice Beam
+- Blizzard
+
+Exeggutor
+- Psychic
+- Double-Edge
+- Sleep Powder
+- Stun Spore
+
+Zapdos
+- Thunderbolt
+- Agility
+- Thunder Wave
+- Drill Peck
+
+Gengar
+- Confuse Ray
+- Seismic Toss
+- Disable
+- Mega Drain
+
+Victreebel
+- Sleep Powder
+- Stun Spore
+- Body Slam
+- Mega Drain

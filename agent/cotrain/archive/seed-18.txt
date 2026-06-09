@@ -1,0 +1,35 @@
+Snorlax
+- Psychic
+- Hyper Beam
+- Counter
+- Surf
+
+Tauros
+- Earthquake
+- Thunderbolt
+- Take Down
+- Body Slam
+
+Chansey
+- Toxic
+- Ice Beam
+- Counter
+- Soft-Boiled
+
+Starmie
+- Surf
+- Thunderbolt
+- Ice Beam
+- Recover
+
+Gengar
+- Mega Drain
+- Psychic
+- Thunderbolt
+- Seismic Toss
+
+Cloyster
+- Clamp
+- Blizzard
+- Substitute
+- Hyper Beam

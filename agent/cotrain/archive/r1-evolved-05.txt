@@ -1,0 +1,35 @@
+Lapras
+- Thunderbolt
+- Body Slam
+- Ice Beam
+- Surf
+
+Jolteon
+- Body Slam
+- Pin Missile
+- Double Kick
+- Thunderbolt
+
+Persian
+- Bubble Beam
+- Thunderbolt
+- Body Slam
+- Hyper Beam
+
+Zapdos
+- Thunderbolt
+- Reflect
+- Light Screen
+- Drill Peck
+
+Chansey
+- Seismic Toss
+- Ice Beam
+- Thunder Wave
+- Counter
+
+Starmie
+- Surf
+- Recover
+- Thunderbolt
+- Thunder Wave

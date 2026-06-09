@@ -1,0 +1,35 @@
+Starmie
+- Surf
+- Psychic
+- Thunder Wave
+- Recover
+
+Gengar
+- Confuse Ray
+- Hypnosis
+- Explosion
+- Mega Drain
+
+Snorlax
+- Blizzard
+- Self-Destruct
+- Psychic
+- Earthquake
+
+Lapras
+- Body Slam
+- Confuse Ray
+- Ice Beam
+- Sing
+
+Golem
+- Rock Slide
+- Take Down
+- Explosion
+- Earthquake
+
+Jynx
+- Lovely Kiss
+- Psychic
+- Rest
+- Counter

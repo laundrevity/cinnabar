@@ -1,0 +1,35 @@
+Lapras
+- Surf
+- Rest
+- Sing
+- Blizzard
+
+Starmie
+- Blizzard
+- Thunderbolt
+- Surf
+- Ice Beam
+
+Hypno
+- Reflect
+- Psychic
+- Rest
+- Seismic Toss
+
+Zapdos
+- Thunderbolt
+- Agility
+- Drill Peck
+- Thunder Wave
+
+Alakazam
+- Counter
+- Psychic
+- Seismic Toss
+- Reflect
+
+Chansey
+- Counter
+- Psychic
+- Reflect
+- Ice Beam

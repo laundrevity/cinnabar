@@ -1,0 +1,35 @@
+Snorlax
+- Amnesia
+- Surf
+- Hyper Beam
+- Reflect
+
+Rhydon
+- Hyper Beam
+- Rock Slide
+- Body Slam
+- Earthquake
+
+Cloyster
+- Blizzard
+- Substitute
+- Explosion
+- Hyper Beam
+
+Alakazam
+- Recover
+- Counter
+- Reflect
+- Seismic Toss
+
+Starmie
+- Recover
+- Blizzard
+- Thunder Wave
+- Thunderbolt
+
+Slowbro
+- Amnesia
+- Surf
+- Reflect
+- Ice Beam

@@ -1,0 +1,35 @@
+Chansey
+- Counter
+- Thunderbolt
+- Thunder Wave
+- Soft-Boiled
+
+Starmie
+- Thunder Wave
+- Ice Beam
+- Thunderbolt
+- Recover
+
+Jynx
+- Blizzard
+- Psychic
+- Rest
+- Lovely Kiss
+
+Tauros
+- Earthquake
+- Hyper Beam
+- Body Slam
+- Blizzard
+
+Alakazam
+- Counter
+- Recover
+- Reflect
+- Psychic
+
+Victreebel
+- Sleep Powder
+- Body Slam
+- Razor Leaf
+- Wrap

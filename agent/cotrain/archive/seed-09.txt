@@ -1,0 +1,35 @@
+Zapdos
+- Agility
+- Light Screen
+- Drill Peck
+- Reflect
+
+Moltres
+- Fire Blast
+- Fire Spin
+- Agility
+- Reflect
+
+Articuno
+- Blizzard
+- Agility
+- Ice Beam
+- Reflect
+
+Jolteon
+- Agility
+- Thunderbolt
+- Pin Missile
+- Thunder Wave
+
+Tauros
+- Take Down
+- Earthquake
+- Thunderbolt
+- Blizzard
+
+Slowbro
+- Thunder Wave
+- Psychic
+- Ice Beam
+- Amnesia

@@ -1,0 +1,35 @@
+Starmie
+- Thunder Wave
+- Ice Beam
+- Psychic
+- Recover
+
+Persian
+- Bubble Beam
+- Thunderbolt
+- Body Slam
+- Hyper Beam
+
+Jolteon
+- Body Slam
+- Pin Missile
+- Double Kick
+- Thunderbolt
+
+Tauros
+- Hyper Beam
+- Blizzard
+- Fire Blast
+- Take Down
+
+Snorlax
+- Psychic
+- Surf
+- Body Slam
+- Counter
+
+Lapras
+- Thunderbolt
+- Body Slam
+- Ice Beam
+- Surf

@@ -1,0 +1,35 @@
+Hypno
+- Psychic
+- Rest
+- Thunder Wave
+- Seismic Toss
+
+Persian
+- Slash
+- Hyper Beam
+- Substitute
+- Bubble Beam
+
+Lapras
+- Ice Beam
+- Body Slam
+- Blizzard
+- Thunderbolt
+
+Alakazam
+- Psychic
+- Recover
+- Thunder Wave
+- Counter
+
+Articuno
+- Blizzard
+- Reflect
+- Rest
+- Hyper Beam
+
+Tauros
+- Body Slam
+- Blizzard
+- Thunderbolt
+- Take Down

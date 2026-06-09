@@ -1,0 +1,35 @@
+Jolteon
+- Body Slam
+- Pin Missile
+- Double Kick
+- Thunderbolt
+
+Alakazam
+- Counter
+- Thunder Wave
+- Reflect
+- Psychic
+
+Snorlax
+- Surf
+- Body Slam
+- Ice Beam
+- Blizzard
+
+Hypno
+- Thunder Wave
+- Seismic Toss
+- Hypnosis
+- Psychic
+
+Jynx
+- Lovely Kiss
+- Blizzard
+- Psychic
+- Counter
+
+Starmie
+- Recover
+- Blizzard
+- Ice Beam
+- Thunderbolt

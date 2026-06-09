@@ -1,0 +1,35 @@
+Lapras
+- Thunderbolt
+- Body Slam
+- Ice Beam
+- Surf
+
+Alakazam
+- Counter
+- Thunder Wave
+- Reflect
+- Psychic
+
+Persian
+- Bubble Beam
+- Thunderbolt
+- Body Slam
+- Hyper Beam
+
+Jolteon
+- Body Slam
+- Pin Missile
+- Double Kick
+- Thunderbolt
+
+Jynx
+- Lovely Kiss
+- Blizzard
+- Psychic
+- Counter
+
+Hypno
+- Rest
+- Seismic Toss
+- Hypnosis
+- Psychic

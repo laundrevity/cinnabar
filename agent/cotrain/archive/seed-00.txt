@@ -1,0 +1,35 @@
+Jolteon
+- Pin Missile
+- Double Kick
+- Agility
+- Body Slam
+
+Cloyster
+- Blizzard
+- Ice Beam
+- Substitute
+- Hyper Beam
+
+Starmie
+- Blizzard
+- Surf
+- Psychic
+- Ice Beam
+
+Chansey
+- Toxic
+- Thunder Wave
+- Seismic Toss
+- Ice Beam
+
+Zapdos
+- Reflect
+- Thunderbolt
+- Thunder Wave
+- Drill Peck
+
+Rhydon
+- Take Down
+- Earthquake
+- Body Slam
+- Rock Slide

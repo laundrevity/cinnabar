@@ -1,0 +1,35 @@
+Jynx
+- Counter
+- Psychic
+- Ice Beam
+- Lovely Kiss
+
+Starmie
+- Thunder Wave
+- Ice Beam
+- Thunderbolt
+- Recover
+
+Cloyster
+- Explosion
+- Substitute
+- Hyper Beam
+- Surf
+
+Hypno
+- Psychic
+- Rest
+- Seismic Toss
+- Hypnosis
+
+Gengar
+- Mega Drain
+- Hypnosis
+- Night Shade
+- Thunderbolt
+
+Victreebel
+- Sleep Powder
+- Body Slam
+- Razor Leaf
+- Wrap

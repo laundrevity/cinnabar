@@ -1,0 +1,35 @@
+Jolteon
+- Thunder Wave
+- Agility
+- Thunderbolt
+- Double Kick
+
+Tauros
+- Take Down
+- Earthquake
+- Blizzard
+- Fire Blast
+
+Starmie
+- Surf
+- Blizzard
+- Recover
+- Psychic
+
+Rhydon
+- Earthquake
+- Rock Slide
+- Take Down
+- Substitute
+
+Zapdos
+- Thunder Wave
+- Thunderbolt
+- Drill Peck
+- Light Screen
+
+Chansey
+- Psychic
+- Thunderbolt
+- Thunder Wave
+- Soft-Boiled

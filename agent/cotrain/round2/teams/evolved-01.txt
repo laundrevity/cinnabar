@@ -1,0 +1,35 @@
+Hypno
+- Thunder Wave
+- Counter
+- Psychic
+- Rest
+
+Alakazam
+- Reflect
+- Thunder Wave
+- Psychic
+- Counter
+
+Articuno
+- Hyper Beam
+- Blizzard
+- Reflect
+- Ice Beam
+
+Golem
+- Explosion
+- Substitute
+- Earthquake
+- Body Slam
+
+Jolteon
+- Body Slam
+- Pin Missile
+- Double Kick
+- Thunderbolt
+
+Starmie
+- Blizzard
+- Surf
+- Thunderbolt
+- Psychic

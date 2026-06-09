@@ -1,0 +1,35 @@
+Rhydon
+- Substitute
+- Earthquake
+- Rock Slide
+- Take Down
+
+Golem
+- Body Slam
+- Explosion
+- Take Down
+- Earthquake
+
+Exeggutor
+- Sleep Powder
+- Double-Edge
+- Psychic
+- Mega Drain
+
+Moltres
+- Fire Blast
+- Agility
+- Reflect
+- Fire Spin
+
+Starmie
+- Psychic
+- Surf
+- Ice Beam
+- Thunder Wave
+
+Snorlax
+- Psychic
+- Self-Destruct
+- Hyper Beam
+- Ice Beam

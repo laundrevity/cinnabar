@@ -1,0 +1,35 @@
+Gengar
+- Night Shade
+- Seismic Toss
+- Thunderbolt
+- Psychic
+
+Tauros
+- Body Slam
+- Earthquake
+- Thunderbolt
+- Hyper Beam
+
+Articuno
+- Blizzard
+- Ice Beam
+- Agility
+- Hyper Beam
+
+Persian
+- Body Slam
+- Hyper Beam
+- Substitute
+- Slash
+
+Slowbro
+- Surf
+- Ice Beam
+- Amnesia
+- Rest
+
+Snorlax
+- Ice Beam
+- Blizzard
+- Body Slam
+- Self-Destruct

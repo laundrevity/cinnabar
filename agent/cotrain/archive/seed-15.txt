@@ -1,0 +1,35 @@
+Dragonite
+- Hyper Beam
+- Surf
+- Body Slam
+- Blizzard
+
+Tauros
+- Hyper Beam
+- Body Slam
+- Fire Blast
+- Blizzard
+
+Snorlax
+- Rest
+- Ice Beam
+- Earthquake
+- Hyper Beam
+
+Moltres
+- Fire Spin
+- Reflect
+- Fire Blast
+- Agility
+
+Zapdos
+- Agility
+- Thunderbolt
+- Light Screen
+- Drill Peck
+
+Articuno
+- Ice Beam
+- Blizzard
+- Rest
+- Hyper Beam

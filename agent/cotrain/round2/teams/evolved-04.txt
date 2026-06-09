@@ -1,0 +1,35 @@
+Gengar
+- Night Shade
+- Confuse Ray
+- Psychic
+- Seismic Toss
+
+Tauros
+- Body Slam
+- Blizzard
+- Hyper Beam
+- Earthquake
+
+Jolteon
+- Body Slam
+- Thunder Wave
+- Double Kick
+- Thunderbolt
+
+Alakazam
+- Reflect
+- Recover
+- Seismic Toss
+- Psychic
+
+Articuno
+- Blizzard
+- Ice Beam
+- Hyper Beam
+- Rest
+
+Snorlax
+- Hyper Beam
+- Counter
+- Self-Destruct
+- Body Slam

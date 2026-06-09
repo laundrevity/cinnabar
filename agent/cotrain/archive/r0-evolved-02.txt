@@ -1,0 +1,35 @@
+Tauros
+- Body Slam
+- Blizzard
+- Thunderbolt
+- Take Down
+
+Alakazam
+- Psychic
+- Recover
+- Thunder Wave
+- Counter
+
+Jolteon
+- Body Slam
+- Agility
+- Double Kick
+- Thunderbolt
+
+Hypno
+- Psychic
+- Rest
+- Thunder Wave
+- Seismic Toss
+
+Persian
+- Slash
+- Hyper Beam
+- Substitute
+- Bubble Beam
+
+Lapras
+- Ice Beam
+- Body Slam
+- Blizzard
+- Thunderbolt

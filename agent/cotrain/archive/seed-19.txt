@@ -1,0 +1,35 @@
+Snorlax
+- Surf
+- Psychic
+- Hyper Beam
+- Self-Destruct
+
+Lapras
+- Rest
+- Thunderbolt
+- Confuse Ray
+- Ice Beam
+
+Chansey
+- Soft-Boiled
+- Seismic Toss
+- Ice Beam
+- Counter
+
+Dragonite
+- Surf
+- Agility
+- Hyper Beam
+- Body Slam
+
+Moltres
+- Fire Blast
+- Hyper Beam
+- Fire Spin
+- Reflect
+
+Starmie
+- Thunder Wave
+- Recover
+- Ice Beam
+- Blizzard

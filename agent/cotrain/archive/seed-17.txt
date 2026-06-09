@@ -1,0 +1,35 @@
+Jolteon
+- Thunder Wave
+- Pin Missile
+- Body Slam
+- Agility
+
+Snorlax
+- Ice Beam
+- Psychic
+- Rest
+- Blizzard
+
+Tauros
+- Hyper Beam
+- Fire Blast
+- Body Slam
+- Thunderbolt
+
+Exeggutor
+- Explosion
+- Sleep Powder
+- Mega Drain
+- Hyper Beam
+
+Persian
+- Hyper Beam
+- Substitute
+- Bubble Beam
+- Thunderbolt
+
+Chansey
+- Reflect
+- Counter
+- Ice Beam
+- Toxic

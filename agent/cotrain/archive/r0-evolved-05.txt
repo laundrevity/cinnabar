@@ -1,0 +1,35 @@
+Starmie
+- Blizzard
+- Thunder Wave
+- Psychic
+- Surf
+
+Jolteon
+- Body Slam
+- Pin Missile
+- Double Kick
+- Thunderbolt
+
+Alakazam
+- Counter
+- Thunder Wave
+- Reflect
+- Psychic
+
+Tauros
+- Hyper Beam
+- Blizzard
+- Thunderbolt
+- Take Down
+
+Gengar
+- Explosion
+- Thunderbolt
+- Mega Drain
+- Hypnosis
+
+Zapdos
+- Drill Peck
+- Thunderbolt
+- Light Screen
+- Thunder Wave

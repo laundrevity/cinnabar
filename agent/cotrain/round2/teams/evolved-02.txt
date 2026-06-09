@@ -1,0 +1,35 @@
+Jolteon
+- Body Slam
+- Pin Missile
+- Double Kick
+- Thunderbolt
+
+Starmie
+- Blizzard
+- Surf
+- Thunderbolt
+- Psychic
+
+Gengar
+- Hypnosis
+- Confuse Ray
+- Thunderbolt
+- Mega Drain
+
+Alakazam
+- Reflect
+- Thunder Wave
+- Psychic
+- Counter
+
+Snorlax
+- Hyper Beam
+- Counter
+- Self-Destruct
+- Body Slam
+
+Hypno
+- Thunder Wave
+- Counter
+- Psychic
+- Rest

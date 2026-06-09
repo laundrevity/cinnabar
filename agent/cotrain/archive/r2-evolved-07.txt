@@ -1,0 +1,35 @@
+Gengar
+- Night Shade
+- Confuse Ray
+- Psychic
+- Seismic Toss
+
+Rhydon
+- Take Down
+- Hyper Beam
+- Earthquake
+- Substitute
+
+Tauros
+- Body Slam
+- Blizzard
+- Hyper Beam
+- Take Down
+
+Articuno
+- Reflect
+- Blizzard
+- Rest
+- Ice Beam
+
+Starmie
+- Blizzard
+- Surf
+- Thunderbolt
+- Psychic
+
+Jolteon
+- Body Slam
+- Thunder Wave
+- Double Kick
+- Thunderbolt

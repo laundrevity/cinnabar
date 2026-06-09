@@ -1,0 +1,35 @@
+Starmie
+- Blizzard
+- Ice Beam
+- Thunderbolt
+- Psychic
+
+Tauros
+- Fire Blast
+- Thunderbolt
+- Earthquake
+- Body Slam
+
+Alakazam
+- Reflect
+- Recover
+- Seismic Toss
+- Psychic
+
+Jolteon
+- Body Slam
+- Thunder Wave
+- Double Kick
+- Thunderbolt
+
+Gengar
+- Hypnosis
+- Thunderbolt
+- Confuse Ray
+- Seismic Toss
+
+Articuno
+- Hyper Beam
+- Blizzard
+- Reflect
+- Ice Beam

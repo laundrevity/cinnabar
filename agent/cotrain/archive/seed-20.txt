@@ -1,0 +1,35 @@
+Alakazam
+- Recover
+- Thunder Wave
+- Psychic
+- Counter
+
+Dragonite
+- Thunderbolt
+- Surf
+- Wrap
+- Hyper Beam
+
+Tauros
+- Earthquake
+- Blizzard
+- Fire Blast
+- Thunderbolt
+
+Golem
+- Explosion
+- Earthquake
+- Body Slam
+- Rock Slide
+
+Persian
+- Bubble Beam
+- Hyper Beam
+- Slash
+- Thunderbolt
+
+Zapdos
+- Thunder Wave
+- Thunderbolt
+- Drill Peck
+- Light Screen

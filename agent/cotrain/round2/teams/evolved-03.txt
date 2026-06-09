@@ -1,0 +1,35 @@
+Jolteon
+- Body Slam
+- Thunder Wave
+- Double Kick
+- Thunderbolt
+
+Articuno
+- Hyper Beam
+- Blizzard
+- Reflect
+- Ice Beam
+
+Gengar
+- Night Shade
+- Confuse Ray
+- Psychic
+- Hypnosis
+
+Tauros
+- Fire Blast
+- Blizzard
+- Thunderbolt
+- Take Down
+
+Starmie
+- Blizzard
+- Thunderbolt
+- Ice Beam
+- Surf
+
+Alakazam
+- Reflect
+- Thunder Wave
+- Psychic
+- Counter

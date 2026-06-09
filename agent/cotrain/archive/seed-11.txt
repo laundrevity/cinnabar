@@ -1,0 +1,35 @@
+Victreebel
+- Swords Dance
+- Wrap
+- Razor Leaf
+- Stun Spore
+
+Jolteon
+- Agility
+- Thunderbolt
+- Thunder Wave
+- Pin Missile
+
+Tauros
+- Hyper Beam
+- Body Slam
+- Take Down
+- Blizzard
+
+Golem
+- Explosion
+- Body Slam
+- Rock Slide
+- Earthquake
+
+Cloyster
+- Ice Beam
+- Explosion
+- Blizzard
+- Surf
+
+Chansey
+- Soft-Boiled
+- Toxic
+- Psychic
+- Ice Beam

@@ -1,0 +1,35 @@
+Exeggutor
+- Stun Spore
+- Double-Edge
+- Explosion
+- Mega Drain
+
+Slowbro
+- Thunder Wave
+- Rest
+- Ice Beam
+- Psychic
+
+Starmie
+- Thunderbolt
+- Thunder Wave
+- Psychic
+- Blizzard
+
+Chansey
+- Counter
+- Thunderbolt
+- Reflect
+- Toxic
+
+Victreebel
+- Hyper Beam
+- Swords Dance
+- Stun Spore
+- Wrap
+
+Articuno
+- Ice Beam
+- Agility
+- Blizzard
+- Rest

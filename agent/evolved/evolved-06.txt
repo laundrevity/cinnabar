@@ -1,0 +1,35 @@
+Tauros
+- Take Down
+- Hyper Beam
+- Body Slam
+- Thunderbolt
+
+Alakazam
+- Psychic
+- Counter
+- Thunder Wave
+- Seismic Toss
+
+Starmie
+- Thunder Wave
+- Ice Beam
+- Thunderbolt
+- Recover
+
+Chansey
+- Ice Beam
+- Psychic
+- Sing
+- Thunder Wave
+
+Jynx
+- Blizzard
+- Ice Beam
+- Rest
+- Lovely Kiss
+
+Persian
+- Substitute
+- Bubble Beam
+- Thunderbolt
+- Hyper Beam
