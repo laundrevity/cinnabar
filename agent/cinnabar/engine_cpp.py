@@ -215,11 +215,14 @@ def build_state(battle, player: int, my_team: Team, static: StaticData, tag: str
 
 
 def play_battle(p1_policy, p2_policy, team1: Team, team2: Team, static: StaticData,
-                seed: int, tag: str = "eng", turn_limit: int = 1000, clauses: bool = False):
+                seed: int, tag: str = "eng", turn_limit: int = 1000, clauses: bool = False,
+                observer=None):
     """Run one battle on the engine, p1_policy vs p2_policy. Returns the ce.Battle so the
     caller can read result() / final_material(). Policies record their own steps (e.g.
     PGPolicy via battle_tag); p1 records under `tag`, p2 under `tag + "_opp"`.
-    `clauses` enables OU Sleep + Freeze Clause (match training / the real format)."""
+    `clauses` enables OU Sleep + Freeze Clause (match training / the real format).
+    `observer`, if given, is called pre-step each turn as observer(battle, s1, a1) — a
+    diagnostics hook (e.g. probe_eggy's per-mon behaviour tracker). It must not mutate."""
     spec1 = [(s, list(mvs)) for s, mvs in team1]
     spec2 = [(s, list(mvs)) for s, mvs in team2]
     battle = ce.make_battle(spec1, spec2, seed)
@@ -234,6 +237,8 @@ def play_battle(p1_policy, p2_policy, team1: Team, team2: Team, static: StaticDa
         s2 = build_state(battle, 1, spec2, static, tag + "_opp", reveal=r2, opp_team=spec1)
         a1 = p1_policy.select_action(s1)
         a2 = p2_policy.select_action(s2)
+        if observer is not None:
+            observer(battle, s1, a1)
         reveal_move(r1, s2, a2)  # p1 sees p2's move
         reveal_move(r2, s1, a1)  # p2 sees p1's move
         battle.step(battle.choices(0)[a1.index], battle.choices(1)[a2.index])

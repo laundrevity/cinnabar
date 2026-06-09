@@ -128,9 +128,12 @@ def selfplay_search_battle(net, opp_model, team1, team2, static, seed, clauses: 
 def play_search_battle(net, opp_policy, opp_model, team1, team2, static, seed,
                        tag: str = "srch", turn_limit: int = 1000, clauses: bool = False,
                        device: str = "cpu", rollouts: int = 3, rng=None,
-                       leaf: str = "value", rollout_policy=None, stats: dict | None = None):
+                       leaf: str = "value", rollout_policy=None, stats: dict | None = None,
+                       observer=None):
     """p1 plays by decision-time search (value head `net` + `opp_model` for the lookahead); p2 plays
-    `opp_policy`. `stats`, if given, accumulates sleep-clause discipline. Returns the ce.Battle."""
+    `opp_policy`. `stats`, if given, accumulates sleep-clause discipline. `observer`, if given, is
+    called pre-step each turn as observer(battle, s1, a1) — a diagnostics hook (must not mutate).
+    Returns the ce.Battle."""
     spec1 = [(s, list(mvs)) for s, mvs in team1]
     spec2 = [(s, list(mvs)) for s, mvs in team2]
     battle = ce.make_battle(spec1, spec2, seed)
@@ -152,6 +155,8 @@ def play_search_battle(net, opp_policy, opp_model, team1, team2, static, seed,
             if getattr(a1, "effect_status", "") == "SLP":
                 stats["reslept"] = stats.get("reslept", 0) + 1
         a2 = opp_policy.select_action(s2)
+        if observer is not None:
+            observer(battle, s1, a1)
         reveal_move(r1, s2, a2)
         reveal_move(r2, s1, a1)
         battle.step(battle.choices(0)[a1.index], battle.choices(1)[a2.index])
