@@ -36,6 +36,11 @@ def main() -> None:
     ap.add_argument("--teams-dir", default=str(Path(__file__).resolve().parent.parent / "teams"))
     ap.add_argument("--battles", type=int, default=100)
     ap.add_argument("--rollouts", type=int, default=3, help="dice samples per action in the lookahead")
+    ap.add_argument("--leaf", choices=["value", "rollout"], default="value",
+                    help="value: score the leaf with the value head (fast); rollout: play to terminal (deep, slow)")
+    ap.add_argument("--sweep", action="store_true",
+                    help="sweep rollouts {1,3,6} value-leaf + a rollout-leaf config to map the headroom "
+                         "(slow — use a small --battles, e.g. 30)")
     ap.add_argument("--opponent", choices=["staller", "smart"], default="staller")
     ap.add_argument("--hidden", type=int, default=128)
     ap.add_argument("--device", default="cpu")
@@ -55,25 +60,33 @@ def main() -> None:
     opp = StallerPolicy() if a.opponent == "staller" else SmartHeuristicPolicy()
     opp_model = SmartHeuristicPolicy()  # the agent's ASSUMED opponent for the lookahead
 
-    raw_w = srch_w = 0.0
+    # Fix the teams + seeds once; raw and every search config play the identical matchups (paired).
     pick = random.Random(a.seed)
-    for i in range(a.battles):
-        t1, t2 = pick.choice(teams), pick.choice(teams)
-        seed = 1000 + i
-        r_raw = play_battle(net_policy, opp, t1, t2, static, seed, tag=f"r{seed}",
-                            turn_limit=a.turn_limit, clauses=a.clauses).result()
-        r_srch = play_search_battle(net, opp, opp_model, t1, t2, static, seed, tag=f"s{seed}",
-                                    turn_limit=a.turn_limit, clauses=a.clauses, device=a.device,
-                                    rollouts=a.rollouts).result()
-        raw_w += _p1_score(r_raw)
-        srch_w += _p1_score(r_srch)
+    matchups = [(pick.choice(teams), pick.choice(teams), 1000 + i) for i in range(a.battles)]
+    raw_w = sum(_p1_score(play_battle(net_policy, opp, t1, t2, static, s, tag=f"r{s}",
+                                      turn_limit=a.turn_limit, clauses=a.clauses).result())
+                for t1, t2, s in matchups)
 
-    print(f"\n{Path(a.ckpt).name} vs {a.opponent} — {a.battles} paired battles, "
-          f"rollouts {a.rollouts}, clauses {'on' if a.clauses else 'off'}\n")
-    print(f"  raw policy win%     {raw_w / a.battles * 100:5.1f}")
-    print(f"  search win%         {srch_w / a.battles * 100:5.1f}")
-    print(f"  lift                {(srch_w - raw_w) / a.battles * 100:+5.1f}%  "
-          f"(positive = lookahead helps)")
+    def eval_search(rollouts, leaf):
+        w = 0.0
+        stats: dict = {}
+        rp = net_policy if leaf == "rollout" else None
+        for t1, t2, s in matchups:
+            r = play_search_battle(net, opp, opp_model, t1, t2, static, s, tag=f"s{s}",
+                                   turn_limit=a.turn_limit, clauses=a.clauses, device=a.device,
+                                   rollouts=rollouts, leaf=leaf, rollout_policy=rp, stats=stats).result()
+            w += _p1_score(r)
+        return w, stats
+
+    n = a.battles
+    print(f"\n{Path(a.ckpt).name} vs {a.opponent} — {n} paired battles, clauses {'on' if a.clauses else 'off'}\n")
+    print(f"  raw policy win%     {raw_w / n * 100:5.1f}   (re-slept 15.3% in the diagnostic)\n")
+    configs = [(1, "value"), (3, "value"), (6, "value"), (3, "rollout")] if a.sweep else [(a.rollouts, a.leaf)]
+    print(f"  {'config':16s} {'search%':>8s} {'lift':>7s}  re-slept")
+    for rollouts, leaf in configs:
+        w, stats = eval_search(rollouts, leaf)
+        rs = f"{stats.get('reslept', 0)}/{stats.get('tempt', 0)}"
+        print(f"  r={rollouts} leaf={leaf:7s} {w / n * 100:7.1f}% {(w - raw_w) / n * 100:+6.1f}%   {rs}")
 
 
 if __name__ == "__main__":
