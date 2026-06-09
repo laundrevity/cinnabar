@@ -41,7 +41,7 @@ import torch
 
 from cinnabar.engine_cpp import StaticData, load_teams, parse_team, play_battle
 from cinnabar.policy import SmartHeuristicPolicy, StallerPolicy
-from cinnabar.search import play_search_battle
+from cinnabar.search import play_search_battle, selfplay_search_battle
 from cinnabar.state import ActionType
 from ladder import _load_net
 
@@ -201,7 +201,9 @@ def main() -> None:
                          "(e.g. a no-sleeper control: 'Lapras:Blizzard,Thunderbolt,Body Slam,Sing' — pick the set)")
     ap.add_argument("--teams-dir", default=str(Path(__file__).resolve().parent.parent / "teams"))
     ap.add_argument("--battles", type=int, default=200)
-    ap.add_argument("--pilots", default="raw,search", help="comma-set of raw,search")
+    ap.add_argument("--pilots", default="raw,search",
+                    help="comma-set of raw,search,selfsearch (selfsearch = both sides search-piloted "
+                         "— the EXACT evolve_teams fitness judge; --opponent is ignored for it)")
     ap.add_argument("--rollouts", type=int, default=3)
     ap.add_argument("--opponent", choices=["smart", "staller"], default="smart")
     ap.add_argument("--hidden", type=int, default=128)
@@ -249,6 +251,11 @@ def main() -> None:
                     bat = play_battle(net_policy, opp, team, opp_team, static, seed,
                                       tag=f"pe{seed}", turn_limit=a.turn_limit, clauses=a.clauses,
                                       observer=tracker)
+                elif pilot == "selfsearch":  # the evolve_teams fitness judge: search on BOTH sides
+                    bat = selfplay_search_battle(net, opp_model, team, opp_team, static, seed,
+                                                 clauses=a.clauses, turn_limit=a.turn_limit,
+                                                 device=a.device, rollouts=a.rollouts,
+                                                 observer=tracker)
                 else:
                     bat = play_search_battle(net, opp, opp_model, team, opp_team, static, seed,
                                              tag=f"pe{seed}", turn_limit=a.turn_limit,

@@ -99,10 +99,13 @@ def search_action_index(battle, player, net, opp_model, static, my_spec, opp_spe
 
 
 def selfplay_search_battle(net, opp_model, team1, team2, static, seed, clauses: bool = False,
-                           turn_limit: int = 300, device: str = "cpu", rollouts: int = 3, rng=None):
+                           turn_limit: int = 300, device: str = "cpu", rollouts: int = 3, rng=None,
+                           observer=None):
     """Both sides choose moves by search with the same `net`. Returns the ce.Battle. The strong-judge
     battle for team evaluation — each team is piloted as well as value-head lookahead can manage, so
-    a team's win-rate reflects its strength under a stronger judge than the raw greedy policy."""
+    a team's win-rate reflects its strength under a stronger judge than the raw greedy policy.
+    `observer`, if given, is called pre-step each turn as observer(battle, s1, a1) — a diagnostics
+    hook on the P1 side (must not mutate)."""
     spec1 = [(s, list(m)) for s, m in team1]
     spec2 = [(s, list(m)) for s, m in team2]
     battle = ce.make_battle(spec1, spec2, seed)
@@ -119,6 +122,8 @@ def selfplay_search_battle(net, opp_model, team1, team2, static, seed, clauses: 
         i2 = search_action_index(battle, 1, net, opp_model, static, spec2, spec1,
                                  reveal=r2, device=device, rollouts=rollouts, rng=rng)
         a1, a2 = s1.available_actions[i1], s2.available_actions[i2]
+        if observer is not None:
+            observer(battle, s1, a1)
         reveal_move(r1, s2, a2)
         reveal_move(r2, s1, a1)
         battle.step(battle.choices(0)[a1.index], battle.choices(1)[a2.index])
