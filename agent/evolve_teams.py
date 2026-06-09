@@ -118,12 +118,20 @@ def tournament_pick(pop, fit, rng: random.Random, k: int) -> Team:
 
 
 # ----------------------------------------------------------------------------- fitness
-def _winrate(team, pol, anchor, static, games, seed, clauses, turn_limit):
-    """Win-rate of `team` (piloted by `pol`) vs random anchor teams (same pilot), both lead
-    positions alternated so a P1 edge can't bias it. Returns (rate, next_seed)."""
+def make_matchups(anchor, games, base_seed) -> list[tuple[Team, int]]:
+    """A fixed (anchor team, engine seed) schedule. Every team scored on the SAME schedule (common
+    random numbers): fitness differences are then team identity, not which anchors / dice each team
+    happened to draw. The probe_eggy sequence measured judge eval noise (games=3 → SE≈29%) at or
+    above the effect sizes evolution must detect (~10–25%); pairing removes the draw-luck component."""
+    pick = random.Random(base_seed)
+    return [(pick.choice(anchor), base_seed + i) for i in range(games)]
+
+
+def _winrate(team, pol, matchups, static, clauses, turn_limit):
+    """Win-rate of `team` (piloted by `pol`) over a fixed (anchor, seed) schedule, both lead
+    positions alternated so a P1 edge can't bias it."""
     w = 0.0
-    for _ in range(games):
-        opp = random.choice(anchor)
+    for opp, seed in matchups:
         lead = seed % 2 == 0  # does `team` lead (P1)?
         p1t, p2t = (team, opp) if lead else (opp, team)
         if isinstance(pol, SearchPilot):
@@ -137,21 +145,19 @@ def _winrate(team, pol, anchor, static, games, seed, clauses, turn_limit):
             w += 0.5
         elif (r == ce.Result.P1Win) == lead:  # the side `team` played on won
             w += 1.0
-        seed += 1
-    return w / max(games, 1), seed
+    return w / max(len(matchups), 1)
 
 
 def evaluate(pop, pilots, anchor, static, games, base_seed, clauses, turn_limit, agg):
-    """Fitness per team = aggregate over the pilot panel of its win-rate vs the anchor teams."""
+    """Fitness per team = aggregate over the pilot panel of its win-rate vs the anchor teams.
+    All teams share one matchup schedule per call (CRN); the schedule rotates across generations
+    (base_seed advances) so evolution can't overfit one seed set."""
+    matchups = make_matchups(anchor, games, base_seed)
     fit = []
-    seed = base_seed
     for team in pop:
-        rates = []
-        for _name, pol in pilots:
-            wr, seed = _winrate(team, pol, anchor, static, games, seed, clauses, turn_limit)
-            rates.append(wr)
+        rates = [_winrate(team, pol, matchups, static, clauses, turn_limit) for _name, pol in pilots]
         fit.append(min(rates) if agg == "min" else sum(rates) / len(rates))
-    return fit, seed
+    return fit, base_seed + games
 
 
 def _summary(team: Team) -> str:
@@ -251,12 +257,11 @@ def main() -> None:
     cols = "  ".join(f"{n:>9s}" for n, _ in pilots)
     print(f"\nFinal leaderboard — win% vs anchor, {a.final_games} games/pilot ({a.agg} agg):\n")
     print(f"  {'#':>2s} {'agg':>5s}  {cols}  team")
+    breakdown = make_matchups(anchor, a.final_games, base)
     for rank in range(min(a.keep, len(pop))):
         (out / f"evolved-{rank + 1:02d}.txt").write_text(to_showdown(pop[rank]))
-        per = []
-        for _name, pol in pilots:
-            wr, base = _winrate(pop[rank], pol, anchor, static, a.final_games, base, a.clauses, a.turn_limit)
-            per.append(wr)
+        per = [_winrate(pop[rank], pol, breakdown, static, a.clauses, a.turn_limit)
+               for _name, pol in pilots]
         cells = "  ".join(f"{p*100:8.1f}%" for p in per)
         print(f"  {rank + 1:2d} {fit[rank]*100:4.0f}%  {cells}  {_summary(pop[rank])}")
     print(f"\nwrote top {min(a.keep, len(pop))} teams to {out}/  "

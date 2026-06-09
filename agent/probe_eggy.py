@@ -235,7 +235,8 @@ def main() -> None:
     pilots = [p.strip() for p in a.pilots.split(",") if p.strip()]
     variants = [(f"{a.swap_out} team", team_eggy), (f"{swap_in[0]} team", team_jynx)]
 
-    print(f"\nSleeper A/B — {Path(a.ckpt).name}, vs {a.opponent}, {a.battles} paired battles, "
+    opp_desc = a.opponent if set(pilots) - {"selfsearch"} else "search-mirror (selfsearch)"
+    print(f"\nSleeper A/B — {Path(a.ckpt).name}, vs {opp_desc}, {a.battles} paired battles, "
           f"clauses {'on' if a.clauses else 'off'}")
     print(f"  base: {Path(a.base).name}; slot {slot}: {a.swap_out} vs {swap_in[0]} "
           f"({'/'.join(swap_in[1])})\n")
