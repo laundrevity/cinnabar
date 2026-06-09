@@ -78,9 +78,19 @@ class Counting(Policy):
         self.moves = 0
         self.switches = 0
         self.forced = 0
+        # Sleep-clause discipline: of the turns where a foe is ALREADY asleep and a sleep move is
+        # available (so sleeping again would just fail under the clause), how often does it sleep?
+        self.sleep_tempt = 0
+        self.sleep_reslept = 0
 
     def select_action(self, state):
+        foe_asleep = any(getattr(m, "status", None) == "SLP" for m in getattr(state, "opponent_team", []))
+        sleep_avail = any(getattr(x, "effect_status", "") == "SLP" for x in state.available_actions)
         a = self.inner.select_action(state)
+        if foe_asleep and sleep_avail:
+            self.sleep_tempt += 1
+            if getattr(a, "effect_status", "") == "SLP":
+                self.sleep_reslept += 1
         if getattr(state, "force_switch", False):
             self.forced += 1
         elif a.type == ActionType.SWITCH:
@@ -93,6 +103,10 @@ class Counting(Policy):
     def switch_rate(self) -> float:
         d = self.switches + self.moves
         return self.switches / d if d else 0.0
+
+    @property
+    def reslept_rate(self) -> float:
+        return self.sleep_reslept / self.sleep_tempt if self.sleep_tempt else 0.0
 
 
 def _team_score(r, lead) -> float:
@@ -163,6 +177,8 @@ def main() -> None:
     print(f"  smart switch rate   {csmart.switch_rate*100:5.1f}%   (sane baseline)")
     print(f"  avg game length     {avg_turns:5.1f} turns")
     print(f"  hit turn limit      {stall*100:5.1f}%   (stall-loops that never resolve)")
+    print(f"  re-slept rate       {cnet.reslept_rate*100:5.1f}%   "
+          f"({cnet.sleep_reslept}/{cnet.sleep_tempt} times a foe was already asleep + a sleep move was up)")
 
     # 3. same defensive team, two pilots, identical opponents.
     def_team = parse_team(DEFENSIVE_TEAM)
