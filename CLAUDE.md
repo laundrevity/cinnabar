@@ -78,7 +78,8 @@ cinnabar/
 │   ├── play.py             # Phase 0: accept human challenges in Gen 1 OU
 │   ├── train.py            # PPO training via Showdown (poke-env)
 │   ├── train_engine.py     # PPO training in-process on the C++ engine (vectorized); --clauses for OU Sleep/Freeze Clause
-│   ├── evolve_teams.py     # coevolutionary team optimizer (team construction): evolve winning teams, agent pilots both sides
+│   ├── evolve_teams.py     # team optimizer (team construction): evolve teams vs a meta anchor, agent/heuristic pilots
+│   ├── cotrain.py          # co-training driver: alternate evolve-teams <-> train-agent, growing team archive, no priors
 │   ├── ladder.py           # Elo ladder over baselines + checkpoints (--clauses to rate under OU clauses)
 │   ├── pad_checkpoint.py   # zero-pad/frame-replicate old checkpoints to the current GLOBAL_DIM (fair warm-start)
 │   ├── smoke_test.py / smoke_engine.py  # bot-vs-bot sanity checks (Showdown / C++ engine)
@@ -109,7 +110,8 @@ cinnabar/
 - **Self-play smoke on the engine:** `cd agent && uv run python smoke_engine.py`
 - **Train on the engine:** `cd agent && uv run python train_engine.py --opponent maxdamage --reward shaped` (`--smoke` for a tiny run; `--opponent self` for self-play)
 - **Train with OU clauses:** add `--clauses` (Sleep + Freeze Clause — a 2nd foe-inflicted sleep/freeze fails). Modeled as a per-`Side` flag, **default off** so the bit-for-bit harness (clause-free `gen1customgame`) is untouched; `ladder.py --clauses` rates under the same rule. Without it the agent over-values sleep (it can sleep your whole team in training). GLOBAL_DIM gained 2 clause-perception features — warm-start old nets with `pad_checkpoint.py`.
-- **Evolve teams (team construction):** `cd agent && uv run python evolve_teams.py --ckpt models_clauses/pg_best.pt --pop 24 --gens 30 --clauses --out evolved` — coevolution: the agent pilots both sides, teams compete vs the population, top teams written as Showdown `.txt`. The pilot ckpt must match the current GLOBAL_DIM (use `pad_checkpoint.py` on older ones).
+- **Evolve teams (team construction):** `cd agent && uv run python evolve_teams.py --ckpt models_clauses/pg_best.pt --pilots net,heuristic --pop 24 --gens 30 --clauses --out evolved` — fitness = win-rate vs a fixed anchor (`--anchor-dir`, default `teams/`) under a pilot panel; top teams written as Showdown `.txt`. Single-pass evolution coadapts to the pilot's blind spots (a weak pilot can't value Snorlax / punish over-statusing), so for real team discovery use co-training instead. Pilot ckpt must match the current GLOBAL_DIM (loaders auto-pad older ones).
+- **Co-train agent + teams (`cotrain.py`):** `cd agent && uv run python cotrain.py --init models_clauses/pg_best.pt --rounds 6 --clauses --out cotrain` — each round evolves teams vs the current agent (scored against a GROWING archive seeded from random teams, no human priors), then retrains the agent on the whole archive. Strategy emerges from the loop. Watch the per-round ladder margin-over-smart for collapse; `--dry-run` prints the commands. The emergence-pure answer to team construction (vs hand-coded constraints or hand-picked anchors).
 
 ## Conventions
 
