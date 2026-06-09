@@ -27,7 +27,7 @@ from train_engine import _FALLBACK_TEAMS  # noqa: E402  (2-team set; import pull
 
 
 def _wlt(p1, p2, teams, n, base, mirror, static, turn_limit):
-    w = l = t = 0
+    w = lo = t = 0
     for i in range(n):
         t1 = random.choice(teams)
         t2 = t1 if mirror else random.choice(teams)
@@ -36,17 +36,17 @@ def _wlt(p1, p2, teams, n, base, mirror, static, turn_limit):
         if r == ce.Result.P1Win:
             w += 1
         elif r == ce.Result.P2Win:
-            l += 1
+            lo += 1
         else:
             t += 1
     f = 100.0 / max(n, 1)
-    return w * f, l * f, t * f
+    return w * f, lo * f, t * f
 
 
 def _row(label, p1, p2, teams, n, base, mirror, static, turn_limit):
-    w, l, t = _wlt(p1, p2, teams, n, base, mirror, static, turn_limit)
+    w, lo, t = _wlt(p1, p2, teams, n, base, mirror, static, turn_limit)
     tag = "MIRROR    " if mirror else "non-mirror"
-    print(f"    {label:22s} {tag} | W {w:5.1f}%  L {l:5.1f}%  T {t:4.1f}%")
+    print(f"    {label:22s} {tag} | W {w:5.1f}%  L {lo:5.1f}%  T {t:4.1f}%")
 
 
 def main() -> None:
@@ -69,10 +69,14 @@ def main() -> None:
     for label, teams in rulers:
         print(f"\n  pool: {label} | {a.battles} battles")
         base = 1
-        _row("smart  vs maxdamage", smart, md, teams, a.battles, base, False, static, a.turn_limit); base += a.battles
-        _row("smart  vs maxdamage", smart, md, teams, a.battles, base, True, static, a.turn_limit); base += a.battles
-        _row("smart  vs random", smart, rng, teams, a.battles, base, False, static, a.turn_limit); base += a.battles
-        _row("maxdmg vs random", md, rng, teams, a.battles, base, False, static, a.turn_limit); base += a.battles
+        _row("smart  vs maxdamage", smart, md, teams, a.battles, base, False, static, a.turn_limit)
+        base += a.battles
+        _row("smart  vs maxdamage", smart, md, teams, a.battles, base, True, static, a.turn_limit)
+        base += a.battles
+        _row("smart  vs random", smart, rng, teams, a.battles, base, False, static, a.turn_limit)
+        base += a.battles
+        _row("maxdmg vs random", md, rng, teams, a.battles, base, False, static, a.turn_limit)
+        base += a.battles
 
 
 if __name__ == "__main__":

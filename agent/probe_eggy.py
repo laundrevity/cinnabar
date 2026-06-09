@@ -47,7 +47,17 @@ from ladder import _load_net
 
 import cinnabar_engine as ce  # noqa: E402
 
-JYNX_SET = ("Jynx", ["Lovely Kiss", "Blizzard", "Psychic", "Rest"])
+DEFAULT_SWAP_IN = "Jynx:Lovely Kiss,Blizzard,Psychic,Rest"
+
+
+def parse_swap_in(spec: str) -> tuple[str, list[str]]:
+    """'Species:Move1,Move2,...' -> (species, [moves]). Lets follow-up variants (a no-sleeper
+    control, Gengar, ...) run without code edits."""
+    species, _, moves = spec.partition(":")
+    mvs = [m.strip() for m in moves.split(",") if m.strip()]
+    if not species.strip() or not mvs:
+        raise SystemExit(f"bad --swap-in {spec!r}; expected 'Species:Move1,Move2,...'")
+    return species.strip(), mvs[:4]
 
 
 def _p1_score(r) -> float:
@@ -186,6 +196,9 @@ def main() -> None:
     ap.add_argument("--base", default=str(Path(__file__).resolve().parent / "probe_teams" / "strong.txt"),
                     help="base team file; must contain the --swap-out species")
     ap.add_argument("--swap-out", default="Exeggutor")
+    ap.add_argument("--swap-in", default=DEFAULT_SWAP_IN,
+                    help="'Species:Move1,Move2,...' replacing --swap-out in variant B "
+                         "(e.g. a no-sleeper control: 'Lapras:Blizzard,Thunderbolt,Body Slam,Sing' — pick the set)")
     ap.add_argument("--teams-dir", default=str(Path(__file__).resolve().parent.parent / "teams"))
     ap.add_argument("--battles", type=int, default=200)
     ap.add_argument("--pilots", default="raw,search", help="comma-set of raw,search")
@@ -201,9 +214,10 @@ def main() -> None:
     torch.manual_seed(a.seed)
     static = StaticData(1)
 
+    swap_in = parse_swap_in(a.swap_in)
     base = parse_team(Path(a.base).read_text())
     team_eggy, slot = swap_slot(base, a.swap_out, next((sp, mv) for sp, mv in base if sp == a.swap_out))
-    team_jynx, _ = swap_slot(base, a.swap_out, JYNX_SET)
+    team_jynx, _ = swap_slot(base, a.swap_out, swap_in)
     opp_teams = load_teams(a.teams_dir)
     if not opp_teams:
         raise SystemExit(f"no teams in {a.teams_dir}")
@@ -217,12 +231,12 @@ def main() -> None:
     pick = random.Random(a.seed)
     matchups = [(pick.choice(opp_teams), 1000 + i) for i in range(a.battles)]
     pilots = [p.strip() for p in a.pilots.split(",") if p.strip()]
-    variants = [(f"{a.swap_out} team", team_eggy), ("Jynx team", team_jynx)]
+    variants = [(f"{a.swap_out} team", team_eggy), (f"{swap_in[0]} team", team_jynx)]
 
     print(f"\nSleeper A/B — {Path(a.ckpt).name}, vs {a.opponent}, {a.battles} paired battles, "
           f"clauses {'on' if a.clauses else 'off'}")
-    print(f"  base: {Path(a.base).name}; slot {slot}: {a.swap_out} vs {JYNX_SET[0]} "
-          f"({'/'.join(JYNX_SET[1])})\n")
+    print(f"  base: {Path(a.base).name}; slot {slot}: {a.swap_out} vs {swap_in[0]} "
+          f"({'/'.join(swap_in[1])})\n")
 
     results: dict[tuple[str, str], float] = {}
     for pilot in pilots:
@@ -252,8 +266,8 @@ def main() -> None:
         eggy = results.get((pilot, variants[0][0]))
         jynx = results.get((pilot, variants[1][0]))
         if eggy is not None and jynx is not None:
-            print(f"  {pilot:6s} pilot: {JYNX_SET[0]} - {a.swap_out} = {(jynx - eggy) * 100:+.1f}%  "
-                  f"(positive = the pilot extracts more from {JYNX_SET[0]})")
+            print(f"  {pilot:6s} pilot: {swap_in[0]} - {a.swap_out} = {(jynx - eggy) * 100:+.1f}%  "
+                  f"(positive = the pilot extracts more from {swap_in[0]})")
 
 
 if __name__ == "__main__":

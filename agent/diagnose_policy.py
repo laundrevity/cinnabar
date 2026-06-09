@@ -190,7 +190,7 @@ def main() -> None:
     cnet2 = Counting(net)
     win_st, turns_st, stall_st = behavior(cnet2, StallerPolicy(), teams, a.battles, static,
                                           a.clauses, a.turn_limit, 5_000)
-    print(f"\n  vs a patient staller (paralysis + recovery + pivot):")
+    print("\n  vs a patient staller (paralysis + recovery + pivot):")
     print(f"    net win%        {win_st*100:5.1f}%   (vs {win*100:.1f}% against the attacking heuristic)")
     print(f"    net switch rate {cnet2.switch_rate*100:5.1f}%")
     print(f"    avg game length {turns_st:5.1f} turns, hit turn limit {stall_st*100:.1f}%")

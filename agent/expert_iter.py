@@ -101,7 +101,10 @@ def train(net, opt, samples, device, epochs, batch_size, value_coef):
             opt.zero_grad()
             loss.backward()
             opt.step()
-            tot += loss.item(); pol += p_loss.item(); val += v_loss.item(); nb += 1
+            tot += loss.item()
+            pol += p_loss.item()
+            val += v_loss.item()
+            nb += 1
         nb = max(nb, 1)
         print(f"    epoch {ep}: loss {tot/nb:.4f}  (policy {pol/nb:.4f}, value {val/nb:.4f})")
     net.eval()

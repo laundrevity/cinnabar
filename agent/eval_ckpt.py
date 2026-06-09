@@ -62,9 +62,9 @@ def _report(net, teams, label, args, base, *, mirror):
                              ("maxdamage", md, ("greedy", "sampled")),
                              ("random", rng, ("greedy",))):
         for mode in modes:
-            w, l, t = _wlt(net, opp, args, teams, args.battles, base, greedy=(mode == "greedy"), mirror=mirror)
+            w, lo, t = _wlt(net, opp, args, teams, args.battles, base, greedy=(mode == "greedy"), mirror=mirror)
             base += 1
-            print(f"    vs {name:9s} {mode:8s} | W {w:5.1f}%  L {l:5.1f}%  T {t:4.1f}%")
+            print(f"    vs {name:9s} {mode:8s} | W {w:5.1f}%  L {lo:5.1f}%  T {t:4.1f}%")
     return base
 
 
