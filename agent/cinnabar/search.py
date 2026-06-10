@@ -299,7 +299,7 @@ def play_search_battle(net, opp_policy, opp_model, team1, team2, static, seed,
                        device: str = "cpu", rollouts: int = 3, rng=None,
                        leaf: str = "value", rollout_policy=None, stats: dict | None = None,
                        observer=None, top_k: int = 0, minimax: bool = False,
-                       opp_top_k: int = 0, paranoia: float = 1.0):
+                       opp_top_k: int = 0, paranoia: float = 1.0, leaf_depth: int = 0):
     """p1 plays by decision-time search (value head `net` + `opp_model` for the lookahead); p2 plays
     `opp_policy`. `stats`, if given, accumulates sleep-clause discipline. `observer`, if given, is
     called pre-step each turn as observer(battle, s1, a1) — a diagnostics hook (must not mutate).
@@ -319,7 +319,9 @@ def play_search_battle(net, opp_policy, opp_model, team1, team2, static, seed,
             cands, vals = search_action_values_minimax(battle, 0, net, static, spec1, spec2,
                                                        reveal=r1, device=device, rollouts=rollouts,
                                                        rng=rng, state=s1, top_k=top_k,
-                                                       opp_top_k=opp_top_k, paranoia=paranoia)
+                                                       opp_top_k=opp_top_k, paranoia=paranoia,
+                                                       leaf_depth=leaf_depth,
+                                                       rollout_policy=rollout_policy)
             i1 = cands[max(range(len(vals)), key=vals.__getitem__)]
         else:
             i1 = search_action_index(battle, 0, net, opp_model, static, spec1, spec2,
