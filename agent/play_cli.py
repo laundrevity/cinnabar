@@ -225,7 +225,9 @@ def _pick_team(teams, names, prompt: str):
 def main() -> None:
     ap = argparse.ArgumentParser(description="Play the agent in the terminal (C++ engine).")
     ap.add_argument("--ckpt", default=None, help="net checkpoint (needed for raw/search pilots)")
-    ap.add_argument("--pilot", choices=["search", "raw", "heuristic", "staller"], default="search")
+    # raw is the measured default: search's lift is matchup-dependent for current nets
+    # (+8.5% vs the attacker but -10% vs the staller — and patient humans play staller-shaped).
+    ap.add_argument("--pilot", choices=["search", "raw", "heuristic", "staller"], default="raw")
     ap.add_argument("--value-ckpt", default=None,
                     help="calibrated ValueNet as the search leaf (HybridNet, like search_eval)")
     ap.add_argument("--top-k", type=int, default=3)
