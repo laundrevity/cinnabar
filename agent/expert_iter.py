@@ -292,6 +292,7 @@ def main() -> None:
           f"anchor-frac={a.anchor_frac} clauses={'on' if a.clauses else 'off'}  "
           f"teams={'gen' if a.gen_teams else len(teams)}")
     best = full_eval("init")
+    best_sd = copy.deepcopy(net.state_dict())
     base = 1
     for r in range(a.rounds):
         samples: list = []
@@ -312,8 +313,18 @@ def main() -> None:
         score = full_eval(f"round {r}")
         if score > best:  # pg_best only on a real improvement (the v1 run left a broken pg_best)
             best = score
+            best_sd = copy.deepcopy(net.state_dict())
             torch.save(net.state_dict(), out / "pg_best.pt")
             print(f"    new best ({best*100:.1f}% mean) -> {out}/pg_best.pt")
+        else:
+            # MONOTONE hill-climb: don't carry a failed round's drift into the next round (ei4:
+            # round 0 won, rounds 1-3 each trained on top of accumulated damage and sank — anchor-KL
+            # only ever ratchets up). Revert to the best net; fresh optimizer (stale Adam moments
+            # don't apply to reverted params). Each round is then an independent sparse-distillation
+            # proposal from the current best, accepted only if the paired eval says so.
+            net.load_state_dict(best_sd)
+            opt = torch.optim.Adam(net.parameters(), lr=a.lr)
+            print(f"    round {r} did not beat best ({best*100:.1f}%) — reverted to best")
 
     if not (out / "pg_best.pt").exists():
         print(f"\nno round beat the init checkpoint — {out}/pg_best.pt not written (init remains best)")
