@@ -96,10 +96,34 @@ def generate_game(net, opp_model, team1, team2, static, seed, device, rollouts, 
     return [(g, a, c, v, out0 if pl == 0 else 1.0 - out0) for (pl, g, a, c, v) in recs]
 
 
-def train(net, init_net, opt, samples, device, epochs, batch_size, value_coef, anchor_coef, tau):
+def train(net, init_net, opt, samples, device, epochs, batch_size, value_coef, anchor_coef, tau,
+          margin=0.0):
     """Distil: soft-CE to softmax(Q/tau) over searched candidates + value MSE to outcome
-    + KL(init || current) trust region so the PPO policy isn't overwritten wholesale."""
+    + KL(init || current) trust region so the PPO policy isn't overwritten wholesale.
+
+    `margin > 0` switches to DECISIVE-ONLY distillation: train (hard CE) only on samples where the
+    teacher overruled the policy's argmax (candidates[0], by topk order) by a Q-gap >= margin, and
+    apply no policy gradient elsewhere. Rationale (measured): Q-spreads over a gated top-3 are
+    usually near-ties, so soft targets ~= uniform over top-3 — distilling them just injects entropy
+    and FLATTENS the policy (raw greedy dropped ~6-10 pts at round 0 in every v2.x run while
+    teacher-match stayed ~50%, i.e. the soft objective was already optimized). The teacher's edge
+    lives in the sparse decisive disagreements; the loss should be equally sparse."""
     net.train()
+    if margin > 0.0:
+        gaps = sorted(max(q) - q[0] for _, _, _, q, _ in samples
+                      if max(range(len(q)), key=q.__getitem__) != 0)
+        kept = [s for s in samples if max(range(len(s[3])), key=s[3].__getitem__) != 0
+                and max(s[3]) - s[3][0] >= margin]
+        if gaps:
+            pct = [gaps[int(len(gaps) * p)] for p in (0.5, 0.75, 0.9)]
+            print(f"    decisive filter: {len(gaps)}/{len(samples)} disagreements "
+                  f"(gap p50/p75/p90 = {pct[0]:.3f}/{pct[1]:.3f}/{pct[2]:.3f}); "
+                  f"kept {len(kept)} with gap >= {margin}")
+        samples = kept
+        if not samples:
+            print("    decisive filter: nothing to train on this round")
+            net.eval()
+            return
     for ep in range(epochs):
         random.shuffle(samples)
         tot = pol = val = anc = match = 0.0
@@ -118,11 +142,13 @@ def train(net, init_net, opt, samples, device, epochs, batch_size, value_coef, a
                 for m, av in enumerate(a):
                     af[j, m] = torch.tensor(av)
                     mask[j, m] = True
-                # Soft target: softmax over the searched candidates' Q-values; zero elsewhere.
-                qt = torch.tensor(q)
-                probs = torch.softmax((qt - qt.max()) / tau, dim=0)
-                for ci, p in zip(cand, probs):
-                    target[j, ci] = p
+                if margin > 0.0:  # decisive-only: hard target on the teacher's overruling pick
+                    target[j, cand[max(range(len(q)), key=q.__getitem__)]] = 1.0
+                else:  # soft target: softmax over the searched candidates' Q-values; zero elsewhere
+                    qt = torch.tensor(q)
+                    probs = torch.softmax((qt - qt.max()) / tau, dim=0)
+                    for ci, p in zip(cand, probs):
+                        target[j, ci] = p
                 out[j] = o
             gf, af, mask, target, out = (x.to(device) for x in (gf, af, mask, target, out))
 
@@ -179,6 +205,11 @@ def main() -> None:
                     help="policy-prior gating for the search teacher (0 = search all actions)")
     ap.add_argument("--tau", type=float, default=0.05,
                     help="soft-target temperature over candidate Q-values (value-head units, ~[0,1])")
+    ap.add_argument("--margin", type=float, default=0.0,
+                    help="decisive-only distillation: train (hard CE) ONLY where the teacher "
+                         "overrules the policy argmax by a Q-gap >= margin; 0 = soft targets on "
+                         "everything (measured to flatten the policy). Round 0 prints the gap "
+                         "percentiles — pick the margin from those.")
     ap.add_argument("--anchor-coef", type=float, default=0.5,
                     help="KL(initial policy || current) trust-region weight (0 = v1's free-fall)")
     ap.add_argument("--opp-model", choices=["policy", "heuristic"], default="policy",
@@ -272,7 +303,7 @@ def main() -> None:
         print(f"\nround {r}: {len(samples)} decisions from {a.games} gated-search games "
               f"({n_anchor} vs the smart anchor, rest self-play)")
         train(net, init_net, opt, samples, a.device, a.epochs, a.batch, a.value_coef,
-              a.anchor_coef, a.tau)
+              a.anchor_coef, a.tau, margin=a.margin)
         torch.save(net.state_dict(), out / f"ei_round{r}.pt")
         score = full_eval(f"round {r}")
         if score > best:  # pg_best only on a real improvement (the v1 run left a broken pg_best)
