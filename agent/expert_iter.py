@@ -180,11 +180,15 @@ def train(net, init_net, opt, samples, device, epochs, batch_size, value_coef, a
 
 
 def quick_eval(net, device, teams, static, clauses, opponent, n=300, seed0=77):
-    """Raw greedy win% vs `opponent` — tracks whether the DISTILLED policy itself improves."""
+    """Raw greedy win% vs `opponent` — tracks whether the DISTILLED policy itself improves.
+    Team picks come from a PRIVATE rng seeded by seed0, so every round evaluates the identical
+    matchup schedule (the global rng is advanced by game generation — using it made round evals
+    unpaired: a round-0 'drop' was measured with zero gradient steps taken)."""
     pol = NetPolicy(net, device, 1)
+    pick_t = random.Random(seed0)
     w = 0.0
     for i in range(n):
-        t1, t2 = random.choice(teams), random.choice(teams)
+        t1, t2 = pick_t.choice(teams), pick_t.choice(teams)
         lead = i % 2 == 0
         pa, pb = (pol, opponent) if lead else (opponent, pol)
         r = play_battle(pa, pb, t1, t2, static, seed0 + i, tag=f"ev{seed0+i}", clauses=clauses).result()
