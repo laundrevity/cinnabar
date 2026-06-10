@@ -59,18 +59,36 @@ async def main() -> None:
     parser.add_argument("--hidden", type=int, default=128, help="must match the trained net (current nets: 128)")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--teams-dir", default=str(TEAMS_DIR), help="dir of team .txt files (random per battle)")
+    parser.add_argument("--search", action="store_true",
+                        help="decide by k-gated decision-time search on a per-turn engine "
+                             "reconstruction of the live battle (browser ground truth; needs "
+                             "--checkpoint + the built engine). Falls back to the raw policy on "
+                             "any reconstruction failure.")
+    parser.add_argument("--top-k", type=int, default=3, help="policy-prior gating for --search")
+    parser.add_argument("--rollouts", type=int, default=3, help="search rollouts per action")
     args = parser.parse_args()
 
     policy, kind = build_policy(args)
     team = build_random_teambuilder(load_team_strings(args.teams_dir))
-    bot = PolicyPlayer(
-        policy=policy,
+    common = dict(
         account_configuration=AccountConfiguration(args.username, None),
         battle_format=args.battle_format,
         team=team,
         start_timer_on_battle_start=True,  # don't stall waiting on a human
         max_concurrent_battles=1,
     )
+    if args.search:
+        if not args.checkpoint:
+            raise SystemExit("--search needs --checkpoint (the net is the search prior + leaf)")
+        from cinnabar.policy import SmartHeuristicPolicy
+        from cinnabar.recon import SearchPolicyPlayer
+
+        bot = SearchPolicyPlayer(policy=policy, net=policy.net, opp_model=SmartHeuristicPolicy(),
+                                 rollouts=args.rollouts, top_k=args.top_k, clauses=True,
+                                 device=args.device, **common)
+        kind += f"+search[k={args.top_k},r={args.rollouts}]"
+    else:
+        bot = PolicyPlayer(policy=policy, **common)
 
     who = args.opponent or "anyone"
     print(
