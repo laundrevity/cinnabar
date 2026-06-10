@@ -42,6 +42,14 @@ cd agent
 uv run python ../engine/tools/trace_diff.py sweep 200   # diffs this engine vs Showdown, turn-for-turn
 ```
 
+**Play against the agent in the terminal** (no server, no browser — runs on the C++ engine):
+
+```bash
+cd agent
+uv run python play_cli.py --ckpt models_fast/pg_best.pt        # search-piloted agent
+uv run python play_cli.py --pilot staller                      # heuristic, no checkpoint needed
+```
+
 **Play / train via Showdown** (the original path):
 
 ```bash

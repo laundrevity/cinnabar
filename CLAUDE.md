@@ -78,6 +78,7 @@ cinnabar/
 │   ├── cinnabar/           # state.py + policy.py + encoding.py + rl/ (engine-free core)
 │   │                       #   showdown.py (poke-env adapter) | engine_cpp.py (C++ engine adapter)
 │   ├── play.py             # Phase 0: accept human challenges in Gen 1 OU
+│   ├── play_cli.py         # play the agent in the TERMINAL (C++ engine, no server/browser)
 │   ├── train.py            # PPO training via Showdown (poke-env)
 │   ├── train_engine.py     # PPO training in-process on the C++ engine (vectorized); --clauses for OU Sleep/Freeze Clause
 │   ├── evolve_teams.py     # team optimizer (team construction): evolve teams vs a meta anchor, agent/heuristic pilots
@@ -101,6 +102,7 @@ cinnabar/
 - **Run local server:** `scripts/run-server.sh` → http://localhost:8000
   - WebSocket endpoint: `ws://localhost:8000/showdown/websocket`
 - **Play in browser:** start the server, open the printed URL, pick Gen 1 OU.
+- **Play in the terminal (no server):** `cd agent && uv run python play_cli.py --ckpt models_fast/pg_best.pt` — interactive battle on the C++ engine, you vs the agent (pilots: `search` (default) / `raw` / `heuristic` / `staller`; search takes the usual `--top-k/--minimax/--opp-top-k/--opp-temp/--value-ckpt` knobs). Partial information both ways; clauses on by default (`--no-clauses`); `--show-eval` prints the agent's win-prob each turn. In battle: number = action, `t` = team, `q` = forfeit.
 - **Set up the agent:** `cd agent && uv sync`
 - **Smoke test (bot vs bot):** `cd agent && uv run python smoke_test.py` (server running)
 - **Play the bot (random vs human):** `cd agent && uv run python play.py`
