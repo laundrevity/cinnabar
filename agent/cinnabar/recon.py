@@ -20,7 +20,7 @@ are estimates, and a boost-then-status history reorders the Gen 1 stat-drop bug.
 from __future__ import annotations
 
 from .engine_cpp import StaticData, _to_id, build_state
-from .search import search_action_values
+from .search import search_action_values, search_action_values_minimax
 from .showdown import PolicyPlayer
 
 import cinnabar_engine as ce  # noqa: E402  (importable after engine_cpp set the path)
@@ -138,7 +138,8 @@ class SearchPolicyPlayer(PolicyPlayer):
     mapping failure falls back to the wrapped raw policy (the game never hangs)."""
 
     def __init__(self, policy, net, opp_model, *args, rollouts: int = 3, top_k: int = 3,
-                 clauses: bool = True, device: str = "cpu", **kwargs) -> None:
+                 clauses: bool = True, device: str = "cpu", minimax: bool = False,
+                 opp_top_k: int = 0, paranoia: float = 1.0, **kwargs) -> None:
         super().__init__(policy, *args, **kwargs)
         self._net = net
         self._opp_model = opp_model
@@ -146,6 +147,9 @@ class SearchPolicyPlayer(PolicyPlayer):
         self._top_k = top_k
         self._clauses = clauses
         self._device = device
+        self._minimax = minimax
+        self._opp_top_k = opp_top_k
+        self._paranoia = paranoia
         self._recon_seed = 1000
         self.search_moves = 0
         self.fallback_moves = 0
@@ -169,10 +173,17 @@ class SearchPolicyPlayer(PolicyPlayer):
                             reveal=None, opp_team=spec2)
         if not state.available_actions:
             return None
-        cands, values = search_action_values(
-            recon, 0, self._net, self._opp_model, self._static, spec1, spec2,
-            reveal=None, device=self._device, rollouts=self._rollouts,
-            state=state, top_k=self._top_k)
+        if self._minimax:
+            cands, values = search_action_values_minimax(
+                recon, 0, self._net, self._static, spec1, spec2,
+                reveal=None, device=self._device, rollouts=self._rollouts,
+                state=state, top_k=self._top_k, opp_top_k=self._opp_top_k,
+                paranoia=self._paranoia)
+        else:
+            cands, values = search_action_values(
+                recon, 0, self._net, self._opp_model, self._static, spec1, spec2,
+                reveal=None, device=self._device, rollouts=self._rollouts,
+                state=state, top_k=self._top_k)
         # Best-first, take the first candidate that maps onto a real Showdown order. (The recon
         # battle can offer moves the real battle forbids — Disabled, out of PP — and vice versa.)
         order = sorted(zip(cands, values), key=lambda cv: -cv[1])

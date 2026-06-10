@@ -68,6 +68,14 @@ async def main() -> None:
     parser.add_argument("--rollouts", type=int, default=3, help="search rollouts per action")
     parser.add_argument("--value-ckpt", default=None,
                         help="calibrated win-prob ValueNet (train_value.py) as the --search leaf")
+    parser.add_argument("--minimax", action="store_true",
+                        help="adversarial lookahead: score each candidate by its WORST CASE over "
+                             "the opponent's replies (predicts Explosions, sleep plays, sacrifices "
+                             "— the point-estimate opponent model is a coward)")
+    parser.add_argument("--paranoia", type=float, default=1.0,
+                        help="1.0 = pure worst-case; 0.0 = mean over replies")
+    parser.add_argument("--opp-top-k", type=int, default=0,
+                        help="gate the opponent's reply set by their policy top-k (0 = all legal)")
     args = parser.parse_args()
 
     policy, kind = build_policy(args)
@@ -93,8 +101,10 @@ async def main() -> None:
             kind += f"+leaf[{Path(args.value_ckpt).name}]"
         bot = SearchPolicyPlayer(policy=policy, net=search_net, opp_model=SmartHeuristicPolicy(),
                                  rollouts=args.rollouts, top_k=args.top_k, clauses=True,
-                                 device=args.device, **common)
-        kind += f"+search[k={args.top_k},r={args.rollouts}]"
+                                 device=args.device, minimax=args.minimax,
+                                 opp_top_k=args.opp_top_k, paranoia=args.paranoia, **common)
+        kind += f"+search[k={args.top_k},r={args.rollouts}" \
+                + (f",minimax p={args.paranoia}" if args.minimax else "") + "]"
     else:
         bot = PolicyPlayer(policy=policy, **common)
 

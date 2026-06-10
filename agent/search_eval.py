@@ -43,6 +43,11 @@ def main() -> None:
     ap.add_argument("--value-ckpt", default=None,
                     help="calibrated win-prob ValueNet (train_value.py) as the search leaf; the "
                          "policy net still proposes (HybridNet). Default: the PPO value head.")
+    ap.add_argument("--minimax", action="store_true",
+                    help="adversarial lookahead: worst case over the opponent's replies "
+                         "(vs the default point-estimate opponent model)")
+    ap.add_argument("--paranoia", type=float, default=1.0)
+    ap.add_argument("--opp-top-k", type=int, default=0)
     ap.add_argument("--sweep", action="store_true",
                     help="sweep rollouts {1,3,6} value-leaf, a rollout-leaf config, and top-k {3,4} "
                          "to map the headroom (slow — use a small --battles, e.g. 30)")
@@ -84,7 +89,8 @@ def main() -> None:
             r = play_search_battle(net, opp, opp_model, t1, t2, static, s, tag=f"s{s}",
                                    turn_limit=a.turn_limit, clauses=a.clauses, device=a.device,
                                    rollouts=rollouts, leaf=leaf, rollout_policy=rp, stats=stats,
-                                   top_k=top_k).result()
+                                   top_k=top_k, minimax=a.minimax, opp_top_k=a.opp_top_k,
+                                   paranoia=a.paranoia).result()
             w += _p1_score(r)
         return w, stats
 

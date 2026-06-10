@@ -119,6 +119,64 @@ def search_action_values(battle, player, net, opp_model, static, my_spec, opp_sp
     return candidates, values
 
 
+def search_action_values_minimax(battle, player, net, static, my_spec, opp_spec,
+                                 reveal=None, device="cpu", rollouts: int = 2, rng=None,
+                                 state=None, top_k: int = 3, opp_top_k: int = 0,
+                                 paranoia: float = 1.0) -> tuple[list[int], list[float]]:
+    """ADVERSARIAL one-turn lookahead: for each of MY gated candidates, roll the turn forward
+    against EVERY plausible opponent reply (their policy top-k from their view; 0 = all their
+    legal actions) and score each leaf; my candidate's value = paranoia * worst-case +
+    (1 - paranoia) * mean.
+
+    Why: the point-estimate opponent model is a coward — it never Explodes, never sleeps
+    strategically, never sacrifices — so the agent walks into every play a human telegraphs
+    (browser ground truth, 2026-06-09: fresh Chansey fed to an obvious Explosion; Snorlax switched
+    into Sleep Powder; Tauros fed to Eggy). Worst-case over the reply set prices the threat the
+    moment it exists: the sleep-absorber switch and the Explosion dodge fall out of minimax, not
+    hand-coded rules. Cost: ~|mine| * |theirs| * rollouts clones per decision — fine at browser
+    speeds, ~10x the point-estimate search as an engine judge."""
+    rng = rng or _random
+    n = len(battle.choices(player))
+    if n <= 1:
+        return [0], [0.0]
+    candidates = list(range(n))
+    if top_k and top_k < n:
+        if state is None:
+            state = build_state(battle, player, my_spec, static, "srch_pri",
+                                reveal=copy.deepcopy(reveal) if reveal is not None else None,
+                                opp_team=opp_spec)
+        candidates = _top_k_candidates(net, state, top_k, device)
+
+    opp_n = len(battle.choices(1 - player))
+    opp_cands = list(range(opp_n))
+    if opp_top_k and opp_top_k < opp_n:
+        opp_state = build_state(battle, 1 - player, opp_spec, static, "srch_o",
+                                reveal=None, opp_team=my_spec)
+        opp_cands = _top_k_candidates(net, opp_state, opp_top_k, device)
+
+    values: list[float] = []
+    for i in candidates:
+        per_reply: list[float] = []
+        for j in opp_cands:
+            total = 0.0
+            for _ in range(rollouts):
+                c = battle.clone()
+                c.reseed(rng.getrandbits(63))
+                mine = c.choices(player)[i]
+                theirs = c.choices(1 - player)[j]
+                c1, c2 = (mine, theirs) if player == 0 else (theirs, mine)
+                c.step(c1, c2)
+                leaf_state = build_state(c, player, my_spec, static, "srch",
+                                         reveal=copy.deepcopy(reveal) if reveal is not None else None,
+                                         opp_team=opp_spec)
+                total += _value(net, leaf_state, device)
+            per_reply.append(total / rollouts)
+        worst = min(per_reply)
+        mean = sum(per_reply) / len(per_reply)
+        values.append(paranoia * worst + (1.0 - paranoia) * mean)
+    return candidates, values
+
+
 def search_action_index(battle, player, net, opp_model, static, my_spec, opp_spec,
                         reveal=None, device="cpu", rollouts: int = 3, rng=None,
                         leaf: str = "value", rollout_policy=None, rollout_cap: int = 150,
@@ -179,7 +237,8 @@ def play_search_battle(net, opp_policy, opp_model, team1, team2, static, seed,
                        tag: str = "srch", turn_limit: int = 1000, clauses: bool = False,
                        device: str = "cpu", rollouts: int = 3, rng=None,
                        leaf: str = "value", rollout_policy=None, stats: dict | None = None,
-                       observer=None, top_k: int = 0):
+                       observer=None, top_k: int = 0, minimax: bool = False,
+                       opp_top_k: int = 0, paranoia: float = 1.0):
     """p1 plays by decision-time search (value head `net` + `opp_model` for the lookahead); p2 plays
     `opp_policy`. `stats`, if given, accumulates sleep-clause discipline. `observer`, if given, is
     called pre-step each turn as observer(battle, s1, a1) — a diagnostics hook (must not mutate).
@@ -195,10 +254,17 @@ def play_search_battle(net, opp_policy, opp_model, team1, team2, static, seed,
         turns += 1
         s1 = build_state(battle, 0, spec1, static, tag, reveal=r1, opp_team=spec2)
         s2 = build_state(battle, 1, spec2, static, tag + "_opp", reveal=r2, opp_team=spec1)
-        i1 = search_action_index(battle, 0, net, opp_model, static, spec1, spec2,
-                                 reveal=r1, device=device, rollouts=rollouts, rng=rng,
-                                 leaf=leaf, rollout_policy=rollout_policy,
-                                 state=s1, top_k=top_k)
+        if minimax:
+            cands, vals = search_action_values_minimax(battle, 0, net, static, spec1, spec2,
+                                                       reveal=r1, device=device, rollouts=rollouts,
+                                                       rng=rng, state=s1, top_k=top_k,
+                                                       opp_top_k=opp_top_k, paranoia=paranoia)
+            i1 = cands[max(range(len(vals)), key=vals.__getitem__)]
+        else:
+            i1 = search_action_index(battle, 0, net, opp_model, static, spec1, spec2,
+                                     reveal=r1, device=device, rollouts=rollouts, rng=rng,
+                                     leaf=leaf, rollout_policy=rollout_policy,
+                                     state=s1, top_k=top_k)
         a1 = s1.available_actions[i1]
         if stats is not None and any(getattr(x, "effect_status", "") == "SLP" for x in s1.available_actions) \
                 and any(m.status == "SLP" for m in s1.opponent_team):
