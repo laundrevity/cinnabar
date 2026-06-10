@@ -1,0 +1,35 @@
+Alakazam
+- Psychic
+- Seismic Toss
+- Recover
+- Thunder Wave
+
+Chansey
+- Ice Beam
+- Thunderbolt
+- Thunder Wave
+- Soft-Boiled
+
+Starmie
+- Ice Beam
+- Thunderbolt
+- Thunder Wave
+- Recover
+
+Snorlax
+- Body Slam
+- Hyper Beam
+- Earthquake
+- Self-Destruct
+
+Exeggutor
+- Psychic
+- Hyper Beam
+- Sleep Powder
+- Explosion
+
+Tauros
+- Body Slam
+- Earthquake
+- Hyper Beam
+- Blizzard
