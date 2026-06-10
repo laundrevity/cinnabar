@@ -66,6 +66,8 @@ async def main() -> None:
                              "any reconstruction failure.")
     parser.add_argument("--top-k", type=int, default=3, help="policy-prior gating for --search")
     parser.add_argument("--rollouts", type=int, default=3, help="search rollouts per action")
+    parser.add_argument("--value-ckpt", default=None,
+                        help="calibrated win-prob ValueNet (train_value.py) as the --search leaf")
     args = parser.parse_args()
 
     policy, kind = build_policy(args)
@@ -83,7 +85,13 @@ async def main() -> None:
         from cinnabar.policy import SmartHeuristicPolicy
         from cinnabar.recon import SearchPolicyPlayer
 
-        bot = SearchPolicyPlayer(policy=policy, net=policy.net, opp_model=SmartHeuristicPolicy(),
+        search_net = policy.net
+        if args.value_ckpt:
+            from cinnabar.rl.net import HybridNet
+            from ladder import _load_value
+            search_net = HybridNet(policy.net, _load_value(args.value_ckpt, args.hidden, args.device))
+            kind += f"+leaf[{Path(args.value_ckpt).name}]"
+        bot = SearchPolicyPlayer(policy=policy, net=search_net, opp_model=SmartHeuristicPolicy(),
                                  rollouts=args.rollouts, top_k=args.top_k, clauses=True,
                                  device=args.device, **common)
         kind += f"+search[k={args.top_k},r={args.rollouts}]"

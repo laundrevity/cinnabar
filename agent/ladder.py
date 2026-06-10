@@ -66,6 +66,16 @@ def _load_net(path: str, hidden: int, device: str, k: int = 1) -> NetPolicy:
     return NetPolicy(net, device, k)
 
 
+def _load_value(path: str, hidden: int, device: str):
+    """Load a calibrated win-prob ValueNet (train_value.py) — the drop-in search leaf."""
+    from cinnabar.rl.net import ValueNet
+
+    vnet = ValueNet(GLOBAL_DIM, hidden).to(device)
+    vnet.load_state_dict(torch.load(path, map_location=device))
+    vnet.eval()
+    return vnet
+
+
 def _play(p1, p2, teams, n, base, mirror, static, turn_limit, pick_team=None, clauses=False):
     """Return p1's score (win=1, tie=0.5) over n games, split across both lead positions."""
     pick_team = pick_team or (lambda: random.choice(teams))

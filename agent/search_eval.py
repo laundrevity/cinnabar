@@ -19,7 +19,7 @@ import torch
 from cinnabar.engine_cpp import StaticData, load_teams, play_battle
 from cinnabar.policy import SmartHeuristicPolicy, StallerPolicy
 from cinnabar.search import play_search_battle
-from ladder import _load_net
+from ladder import _load_net, _load_value
 
 import cinnabar_engine as ce  # noqa: E402
 
@@ -40,6 +40,9 @@ def main() -> None:
                     help="value: score the leaf with the value head (fast); rollout: play to terminal (deep, slow)")
     ap.add_argument("--top-k", type=int, default=0,
                     help="policy-prior gating: search only the policy's top-k actions (0 = search all)")
+    ap.add_argument("--value-ckpt", default=None,
+                    help="calibrated win-prob ValueNet (train_value.py) as the search leaf; the "
+                         "policy net still proposes (HybridNet). Default: the PPO value head.")
     ap.add_argument("--sweep", action="store_true",
                     help="sweep rollouts {1,3,6} value-leaf, a rollout-leaf config, and top-k {3,4} "
                          "to map the headroom (slow — use a small --battles, e.g. 30)")
@@ -59,6 +62,10 @@ def main() -> None:
 
     net_policy = _load_net(a.ckpt, a.hidden, a.device, 1)  # greedy raw policy (and .net for search)
     net = net_policy.net
+    if a.value_ckpt:
+        from cinnabar.rl.net import HybridNet
+        net = HybridNet(net, _load_value(a.value_ckpt, a.hidden, a.device))
+        print(f"  search leaf: calibrated ValueNet {Path(a.value_ckpt).name} (policy net proposes)")
     opp = StallerPolicy() if a.opponent == "staller" else SmartHeuristicPolicy()
     opp_model = SmartHeuristicPolicy()  # the agent's ASSUMED opponent for the lookahead
 

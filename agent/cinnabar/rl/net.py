@@ -54,3 +54,50 @@ class ActionScorer(nn.Module):
     def value(self, global_feats: torch.Tensor) -> torch.Tensor:
         """global_feats: (G,) -> scalar value, or (B, G) -> (B,) batched."""
         return self.value_mlp(global_feats).squeeze(-1)
+
+
+class ValueNet(nn.Module):
+    """Standalone CALIBRATED win-probability head: global features -> P(win) in [0, 1].
+
+    The ActionScorer's value head is trained as a PPO baseline on shaped returns — useful for
+    *ranking* leaves, but uncalibrated as a probability (measured MSE ~0.48 vs win/loss, worse
+    than always answering 0.5). This one is trained by supervised regression (BCE) on game
+    outcomes from a deliberately diverse state distribution (train_value.py), so the search leaf
+    can price tempo, incapacitation, and lost matchups instead of next-turn HP bars."""
+
+    def __init__(self, global_dim: int, hidden: int = 128) -> None:
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(global_dim, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+
+    def forward(self, global_feats: torch.Tensor) -> torch.Tensor:
+        """Logits (for BCEWithLogits training)."""
+        return self.mlp(global_feats).squeeze(-1)
+
+    def value(self, global_feats: torch.Tensor) -> torch.Tensor:
+        """P(win): (G,) -> scalar, or (B, G) -> (B,). The search-leaf interface."""
+        return torch.sigmoid(self.forward(global_feats))
+
+
+class HybridNet:
+    """Search-facing shim: the POLICY net proposes (score_actions* feeds top-k gating), the
+    calibrated ValueNet disposes (value() is the leaf). Duck-types ActionScorer for search.py —
+    nothing in the search stack changes."""
+
+    def __init__(self, policy_net: ActionScorer, value_net: ValueNet) -> None:
+        self.policy_net = policy_net
+        self.value_net = value_net
+
+    def score_actions(self, g, a):
+        return self.policy_net.score_actions(g, a)
+
+    def score_actions_batch(self, g, a, mask):
+        return self.policy_net.score_actions_batch(g, a, mask)
+
+    def value(self, g):
+        return self.value_net.value(g)
