@@ -230,6 +230,52 @@ int main() {
         CHECK(off.p2.team[0].status == Status::Sleep); // clause OFF (default): the sleep lands
     }
 
+    // State injection (browser ground-truth reconstruction): set_mon_state / set_active_slot.
+    {
+        Battle b = make_battle({{"Tauros", {"Body Slam"}}, {"Snorlax", {"Body Slam"}}},
+                               {{"Chansey", {"Ice Beam"}}, {"Starmie", {"Surf"}}}, 42);
+        // Paralyzed Tauros at half HP: hp = lround(0.5 * 353) = 177; m_spe = floor(318 * 0.25) = 79.
+        set_mon_state(b, 0, 0, 0.5, Status::Paralysis, 0, true, 0, 0, 0, 0,
+                      false, false, false, false, 0, 0, false);
+        CHECK_EQ(b.p1.team[0].hp, 177);
+        CHECK(b.p1.team[0].status == Status::Paralysis);
+        CHECK_EQ(b.p1.team[0].m_spe, 79);
+        CHECK_EQ(b.p1.team[0].m_atk, b.p1.team[0].atk);  // other stats untouched
+        // Boost stages recompute modified stats (Snorlax +2 Atk = exactly stored * 2).
+        set_mon_state(b, 0, 1, 1.0, Status::None, 0, false, 2, 0, 0, 0,
+                      false, false, false, false, 0, 0, false);
+        CHECK_EQ(b.p1.team[1].m_atk, b.p1.team[1].atk * 2);
+        CHECK_EQ(b.p1.team[1].boost_atk, 2);
+        // Burn drop applies after stage recompute: floor(atk * 0.5).
+        set_mon_state(b, 0, 1, 1.0, Status::Burn, 0, false, 0, 0, 0, 0,
+                      false, false, false, false, 0, 0, false);
+        CHECK_EQ(b.p1.team[1].m_atk, b.p1.team[1].atk / 2);
+        // Sleep keeps sleep_turns + the foe-inflicted flag (clause bookkeeping).
+        set_mon_state(b, 1, 1, 0.8, Status::Sleep, 3, true, 0, 0, 0, 0,
+                      false, false, false, false, 0, 0, false);
+        CHECK_EQ(b.p2.team[1].sleep_turns, 3);
+        CHECK(b.p2.team[1].status_by_foe);
+        // Screens / volatiles land.
+        set_mon_state(b, 1, 0, 0.9, Status::None, 0, false, 0, 0, 0, 0,
+                      true, true, false, false, 0, 2, true);
+        CHECK(b.p2.team[0].reflect);
+        CHECK(b.p2.team[0].light_screen);
+        CHECK_EQ(b.p2.team[0].confuse_turns, 2);
+        CHECK(b.p2.team[0].leech_seeded);
+        // Fainted active -> must_switch; choosing a live slot clears it.
+        set_mon_state(b, 1, 0, 0.0, Status::None, 0, false, 0, 0, 0, 0,
+                      false, false, false, false, 0, 0, false);
+        set_active_slot(b, 1, 0);
+        CHECK(b.p2.team[0].fainted());
+        CHECK(b.p2.must_switch);
+        set_active_slot(b, 1, 1);
+        CHECK_EQ(b.p2.active, 1);
+        CHECK(!b.p2.must_switch);
+        // The battle still steps normally from an injected position.
+        Result r = b.step(move_choice(0), move_choice(0));
+        CHECK(r == Result::Ongoing || r == Result::P1Win || r == Result::P2Win);
+    }
+
     if (failures == 0) std::printf("ALL ENGINE TESTS PASSED\n");
     else std::printf("%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;

@@ -861,6 +861,40 @@ Result Battle::step(const Choice& c1, const Choice& c2) {
     return result();
 }
 
+void set_mon_state(Battle& b, int player, int slot, double hp_fraction, Status status,
+                   int sleep_turns, bool status_by_foe, int stage_atk, int stage_def,
+                   int stage_spc, int stage_spe, bool reflect, bool light_screen,
+                   bool must_recharge, bool toxic, int tox_stage, int confuse_turns,
+                   bool leech_seeded) {
+    Side& side = player == 0 ? b.p1 : b.p2;
+    Pokemon& p = side.team.at(static_cast<size_t>(slot));
+    long hp = std::lround(hp_fraction * p.max_hp);
+    p.hp = static_cast<int>(std::clamp<long>(hp, 0, p.max_hp));
+    p.status = status;
+    p.sleep_turns = (status == Status::Sleep) ? sleep_turns : 0;
+    p.status_by_foe = status_by_foe && (status == Status::Sleep || status == Status::Freeze);
+    p.toxic = toxic && status == Status::Poison;
+    p.tox_stage = p.toxic ? tox_stage : 0;
+    p.boost_atk = std::clamp(stage_atk, -6, 6);
+    p.boost_def = std::clamp(stage_def, -6, 6);
+    p.boost_spc = std::clamp(stage_spc, -6, 6);
+    p.boost_spe = std::clamp(stage_spe, -6, 6);
+    for (int s = 0; s < 4; ++s) recompute_stat(p, s);   // stages (boostBy path) ...
+    if (p.status == Status::Burn) modify_stat(p, 0, 0.5);        // ... then the status drops
+    if (p.status == Status::Paralysis) modify_stat(p, 3, 0.25);
+    p.reflect = reflect;
+    p.light_screen = light_screen;
+    p.must_recharge = must_recharge;
+    p.confuse_turns = confuse_turns;
+    p.leech_seeded = leech_seeded;
+}
+
+void set_active_slot(Battle& b, int player, int slot) {
+    Side& side = player == 0 ? b.p1 : b.p2;
+    side.active = std::clamp(slot, 0, static_cast<int>(side.team.size()) - 1);
+    side.must_switch = side.mon().fainted() && side.has_alive_bench();
+}
+
 Battle make_battle(const TeamSpec& team1, const TeamSpec& team2, uint64_t seed) {
     auto build = [](const TeamSpec& spec) {
         Side s;

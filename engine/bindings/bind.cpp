@@ -54,6 +54,35 @@ PYBIND11_MODULE(cinnabar_engine, m) {
         .def("set_clauses", &Battle::set_clauses, py::arg("on"))  // OU Sleep+Freeze Clause (training)
         .def("clone", [](const Battle& b) { return b; })          // deep copy for decision-time search
         .def("reseed", &Battle::reseed, py::arg("seed"))          // fresh dice for search rollouts
+        // State injection (browser ground-truth reconstruction): set one mon's mid-battle
+        // condition. status is the adapter's code ("", "SLP", "PAR", "FRZ", "BRN", "PSN", "TOX");
+        // stages are -6..+6; modified stats are recomputed (stages, then burn/para drop).
+        .def("set_mon_state", [](Battle& b, int player, int slot, double hp_fraction,
+                                 const std::string& status, int sleep_turns, bool status_by_foe,
+                                 int boost_atk, int boost_def, int boost_spc, int boost_spe,
+                                 bool reflect, bool light_screen, bool must_recharge,
+                                 int tox_stage, int confuse_turns, bool leech_seeded) {
+            Status st = Status::None;
+            bool toxic = false;
+            if (status == "SLP") st = Status::Sleep;
+            else if (status == "PAR") st = Status::Paralysis;
+            else if (status == "BRN") st = Status::Burn;
+            else if (status == "FRZ") st = Status::Freeze;
+            else if (status == "PSN") st = Status::Poison;
+            else if (status == "TOX") { st = Status::Poison; toxic = true; }
+            set_mon_state(b, player, slot, hp_fraction, st, sleep_turns, status_by_foe,
+                          boost_atk, boost_def, boost_spc, boost_spe, reflect, light_screen,
+                          must_recharge, toxic, tox_stage, confuse_turns, leech_seeded);
+        }, py::arg("player"), py::arg("slot"), py::arg("hp_fraction"), py::arg("status") = "",
+           py::arg("sleep_turns") = 0, py::arg("status_by_foe") = true,
+           py::arg("boost_atk") = 0, py::arg("boost_def") = 0, py::arg("boost_spc") = 0,
+           py::arg("boost_spe") = 0, py::arg("reflect") = false, py::arg("light_screen") = false,
+           py::arg("must_recharge") = false, py::arg("tox_stage") = 0,
+           py::arg("confuse_turns") = 0, py::arg("leech_seeded") = false)
+        // Choose the active slot (sets must_switch when that mon is fainted and a bench remains).
+        .def("set_active_slot", [](Battle& b, int player, int slot) {
+            set_active_slot(b, player, slot);
+        }, py::arg("player"), py::arg("slot"))
         .def("active_species", [](const Battle& b, int player) {
             return (player == 0 ? b.p1 : b.p2).mon().species->name;
         }, py::arg("player"))

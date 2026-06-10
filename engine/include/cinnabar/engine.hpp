@@ -180,4 +180,19 @@ struct Battle {
 using TeamSpec = std::vector<std::pair<std::string, std::vector<std::string>>>;
 Battle make_battle(const TeamSpec& team1, const TeamSpec& team2, uint64_t seed);
 
+// --- State injection (browser ground-truth reconstruction) ------------------------------------
+// Additive API: unused by training, search-on-engine, and the bit-for-bit fidelity harness.
+// Sets one mon's mid-battle condition and recomputes its modified stats in the canonical order:
+// stages first (boostBy), then the burn/paralysis drop (modifyStat). A mon that was boosted
+// AFTER being statused would have the drop discarded (the real Gen 1 boostBy bug) — that history
+// is unknowable from outside, so this is a documented approximation. PP, Substitute, Disable and
+// partial-trap state are left at defaults (reconstruction gaps; see agent/cinnabar/recon.py).
+void set_mon_state(Battle& b, int player, int slot, double hp_fraction, Status status,
+                   int sleep_turns, bool status_by_foe, int stage_atk, int stage_def,
+                   int stage_spc, int stage_spe, bool reflect, bool light_screen,
+                   bool must_recharge, bool toxic, int tox_stage, int confuse_turns,
+                   bool leech_seeded);
+// Choose the active slot; sets must_switch when that mon is fainted and a bench remains.
+void set_active_slot(Battle& b, int player, int slot);
+
 }  // namespace cinnabar
