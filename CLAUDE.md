@@ -1,4 +1,4 @@
-# CLAUDE.md 
+# CLAUDE.md
 
 Context for AI assistants working in this repo. Read this first.
 
