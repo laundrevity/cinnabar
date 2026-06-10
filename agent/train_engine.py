@@ -29,7 +29,7 @@ from cinnabar.engine_cpp import (  # inserts engine/build on sys.path
     Reveal, StaticData, build_state, final_material, load_teams, register_encoder, reveal_move)
 import cinnabar_engine as ce  # noqa: E402
 from cinnabar.policy import (  # noqa: E402
-    MaxDamagePolicy, RandomPolicy, SmartHeuristicPolicy)
+    MaxDamagePolicy, RandomPolicy, SmartHeuristicPolicy, StallerPolicy)
 from cinnabar.rl.agent import StepRecord  # noqa: E402
 from cinnabar.rl.net import ActionScorer  # noqa: E402
 from cinnabar.rl.returns import discounted_returns, standardize  # noqa: E402
@@ -80,8 +80,11 @@ def parse_args() -> argparse.Namespace:
                    help="self: refresh the opponent every N iters; league: add a snapshot every N iters")
     p.add_argument("--anchor-frac", type=float, default=0.5,
                    help="self/league: fraction of iterations played vs the anchor (guards against drift)")
-    p.add_argument("--anchor", choices=["smart", "maxdamage"], default="smart",
-                   help="self/league: which fixed baseline to anchor a fraction of iters against")
+    p.add_argument("--anchor", choices=["smart", "maxdamage", "staller", "mix"], default="smart",
+                   help="self/league: which fixed baseline to anchor a fraction of iters against. "
+                        "staller punishes the attrition blind spot (patient para+recover play — the "
+                        "style humans beat the agent with); mix draws smart/staller/maxdamage per "
+                        "anchor iter")
     p.add_argument("--teams-dir", default=str(Path(__file__).resolve().parent.parent / "teams"),
                    help="dir of Showdown team .txt files (a random one per side per battle)")
     p.add_argument("--random-movesets", action="store_true",
@@ -451,26 +454,34 @@ def main() -> None:
         fixed_opp = RandomPolicy()
 
     rng_eval, md_eval, sm_eval = RandomPolicy(), MaxDamagePolicy(), SmartHeuristicPolicy()
+    st_eval = StallerPolicy()
     # self/league: anchor a fraction of iters against a fixed baseline so self-play can't drift
-    # off into beating only its past selves. Smart is the stronger, more informative anchor.
-    anchor = SmartHeuristicPolicy() if args.anchor == "smart" else MaxDamagePolicy()
+    # off into beating only its past selves. Smart is the stronger attacker; the staller is the
+    # patient para+recover style that self-play never produces (and humans exploit); mix rotates.
+    anchors = {"smart": [SmartHeuristicPolicy()], "maxdamage": [MaxDamagePolicy()],
+               "staller": [StallerPolicy()],
+               "mix": [SmartHeuristicPolicy(), StallerPolicy(), MaxDamagePolicy()]}[args.anchor]
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     print(f"Engine PPO (vectorized): {args.iters} iters x {args.batch} battles vs {args.opponent} "
-          f"[{args.reward} reward]. -> {out}/")
+          f"[{args.reward} reward, anchor {args.anchor}]. -> {out}/")
 
-    # Rank checkpoints on the SmartHeuristic yardstick — max-damage is too weak and exploitable
-    # to rank by (mirror eval showed its win% is ~uncorrelated with real strength). Seeding from
-    # the loaded net also stops a resume from clobbering a good pg_best.pt on the first eval.
-    best_sm = -1.0
+    # Rank checkpoints on the MEAN of the smart + staller yardsticks — max-damage is too weak
+    # to rank by, and smart-only selection produced nets that bled to patient staller play
+    # (the human-shaped loss). Seeding from the loaded net also stops a resume from clobbering
+    # a good pg_best.pt on the first eval.
+    best_score = -1.0
     if args.init:
-        best_sm = eval_winrate(net, sm_eval, args, args.eval_battles, 0)
-        print(f"init checkpoint: vs smart {best_sm:5.1f}% (pg_best.pt overwritten only if beaten)")
+        wr_sm0 = eval_winrate(net, sm_eval, args, args.eval_battles, 0)
+        wr_st0 = eval_winrate(net, st_eval, args, args.eval_battles, 1)
+        best_score = (wr_sm0 + wr_st0) / 2
+        print(f"init checkpoint: vs smart {wr_sm0:5.1f}% | vs staller {wr_st0:5.1f}% "
+              f"(pg_best.pt overwritten only if the mean is beaten)")
 
     for it in range(1, args.iters + 1):
         t0 = time.time()
         if args.opponent in ("self", "league") and random.random() < args.anchor_frac:
-            opp = anchor  # anchor this iter vs max-damage so self-play can't drift off the benchmark
+            opp = random.choice(anchors)  # anchor iter: don't drift off the fixed benchmarks
         elif pool is not None:
             opp = random.choice(pool)  # league: a random past self
         else:
@@ -488,10 +499,11 @@ def main() -> None:
             wr_rng = eval_winrate(net, rng_eval, args, args.eval_battles, it)
             wr_md = eval_winrate(net, md_eval, args, args.eval_battles, it + 1)
             wr_sm = eval_winrate(net, sm_eval, args, args.eval_battles, it + 2)
+            wr_st = eval_winrate(net, st_eval, args, args.eval_battles, it + 3)
             print(f"         eval (greedy) | vs random {wr_rng:5.1f}% | vs maxdmg {wr_md:5.1f}% "
-                  f"| vs smart {wr_sm:5.1f}%")
-            if wr_sm > best_sm:
-                best_sm = wr_sm
+                  f"| vs smart {wr_sm:5.1f}% | vs staller {wr_st:5.1f}%")
+            if (wr_sm + wr_st) / 2 > best_score:
+                best_score = (wr_sm + wr_st) / 2
                 torch.save(net.state_dict(), out / "pg_best.pt")
 
         if it % args.snapshot_every == 0:
