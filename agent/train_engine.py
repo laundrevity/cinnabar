@@ -26,9 +26,10 @@ import torch
 
 from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM, TEAM_SIZE, featurize, stack_global
 from cinnabar.engine_cpp import (  # inserts engine/build on sys.path
-    Reveal, StaticData, build_state, final_material, load_teams, reveal_move)
+    Reveal, StaticData, build_state, final_material, load_teams, register_encoder, reveal_move)
 import cinnabar_engine as ce  # noqa: E402
-from cinnabar.policy import MaxDamagePolicy, RandomPolicy, SmartHeuristicPolicy  # noqa: E402
+from cinnabar.policy import (  # noqa: E402
+    MaxDamagePolicy, RandomPolicy, SmartHeuristicPolicy)
 from cinnabar.rl.agent import StepRecord  # noqa: E402
 from cinnabar.rl.net import ActionScorer  # noqa: E402
 from cinnabar.rl.returns import discounted_returns, standardize  # noqa: E402
@@ -168,18 +169,25 @@ def _select_opp(opp, states, device, histories=None) -> list[int]:
 # ----- PPO update (batched) -----------------------------------------------------------------
 
 def _tensorize(steps, returns, device):
+    import numpy as np
+
     n = len(steps)
     g_dim = len(steps[0].global_feats)
     a_dim = len(steps[0].action_feats[0])
     k = max(len(s.action_feats) for s in steps)
-    glob = torch.zeros(n, g_dim)
-    act = torch.zeros(n, k, a_dim)
-    mask = torch.zeros(n, k, dtype=torch.bool)
+    # Build in numpy then convert once — feats from the fast path already ARE float32
+    # numpy rows, so the per-row work is a memcpy, not a Python-float conversion.
+    glob_np = np.zeros((n, g_dim), dtype=np.float32)
+    act_np = np.zeros((n, k, a_dim), dtype=np.float32)
+    mask_np = np.zeros((n, k), dtype=bool)
     for i, s in enumerate(steps):
-        glob[i] = torch.tensor(s.global_feats)
+        glob_np[i] = s.global_feats
         m = len(s.action_feats)
-        act[i, :m] = torch.tensor(s.action_feats)
-        mask[i, :m] = True
+        act_np[i, :m] = s.action_feats
+        mask_np[i, :m] = True
+    glob = torch.from_numpy(glob_np)
+    act = torch.from_numpy(act_np)
+    mask = torch.from_numpy(mask_np)
     chosen = torch.tensor([s.chosen for s in steps], dtype=torch.long)
     beh = torch.tensor([s.behavior_logp for s in steps], dtype=torch.float32)
     ret = torch.tensor(returns, dtype=torch.float32)
@@ -246,12 +254,14 @@ def _make_battles(n, base):
         t1, t2 = _PICK_TEAM(), _PICK_TEAM()
         s1 = [(s, list(m)) for s, m in t1]
         s2 = [(s, list(m)) for s, m in t2]
-        # r1/r2: persistent per-battle reveal sets (partial info + the agent's revealed-team memory).
+        # r1/r2: persistent per-battle reveal sets (partial info + the agent's revealed-team
+        # memory) for the Python path; o1/o2 are their C++ twins for the fast path.
         b = ce.make_battle(s1, s2, base + i)
         if _CLAUSES:
             b.set_clauses(True)  # OU Sleep+Freeze Clause for this battle
         items.append({"b": b, "s1": s1, "s2": s2,
                       "tag": f"{base}_{i}", "r1": Reveal(), "r2": Reveal(),
+                      "o1": ce.Observer(), "o2": ce.Observer(),
                       "h0": [], "h1": []})  # per-side global-frame history (frame-stacking)
     return items
 
@@ -259,8 +269,80 @@ def _make_battles(n, base):
 _STATIC: StaticData | None = None  # set in main(); the poke-env static-data cache for build_state
 
 
+def _forward_select(net, glob, act, mask, device, *, sample, extras):
+    """One batched forward straight over encode_batch's numpy outputs. Returns
+    (chosen indices, behaviour log-probs or None, values or None)."""
+    g, a = torch.from_numpy(glob), torch.from_numpy(act)
+    m = torch.from_numpy(mask)
+    if device != "cpu":
+        g, a, m = g.to(device), a.to(device), m.to(device)
+    with torch.no_grad():
+        logits = net.score_actions_batch(g, a, m)
+        logp_all = torch.log_softmax(logits, dim=1)
+        chosen = (torch.multinomial(logp_all.exp(), 1).squeeze(1) if sample
+                  else logits.argmax(dim=1))
+        if not extras:
+            return chosen.tolist(), None, None
+        beh = logp_all.gather(1, chosen.unsqueeze(1)).squeeze(1).tolist()
+        vals = net.value(g).tolist()
+    return chosen.tolist(), beh, vals
+
+
+def _run_fast(items, net, opp, args, *, record_buf, greedy_learner=False):
+    """The C++-encoder rollout loop: per turn, ONE encode_batch call per side (features
+    computed in C++, returned as numpy) + one batched forward, then step_pair (reveal
+    bookkeeping + step, also C++). Same semantics as _run_py — the encoder itself is
+    parity-tested bit-for-bit (tests/test_encoder_parity.py); this loop just avoids
+    building Python BattleStates, which profiling showed was ~80% of rollout time."""
+    if not ce.encoder_ready():
+        register_encoder(_STATIC)
+    opp_kind = None
+    if not isinstance(opp, ActionScorer):  # map heuristic pilots to their C++ twins
+        from cinnabar.search import _heuristic_kind  # one mapping for search + training
+        opp_kind = _heuristic_kind(opp)
+    for it in items:  # tolerate items built without observers (e.g. eval_ckpt's)
+        it.setdefault("o1", ce.Observer())
+        it.setdefault("o2", ce.Observer())
+    for _ in range(args.turn_limit):
+        live = [it for it in items if it["b"].result() == ce.Result.Ongoing]
+        if not live:
+            break
+        battles = [it["b"] for it in live]
+        glob, act, mask, mat, omat = ce.encode_batch(
+            battles, [0] * len(live), [it["o1"] for it in live])
+        idx1, beh, vals = _forward_select(net, glob, act, mask, args.device,
+                                          sample=not greedy_learner,
+                                          extras=record_buf is not None)
+        if record_buf is not None:
+            for j, it in enumerate(live):
+                n = int(mask[j].sum())
+                record_buf.setdefault(it["tag"], []).append(StepRecord(
+                    glob[j].copy(), act[j, :n].copy(), idx1[j], beh[j], vals[j],
+                    float(mat[j]), float(omat[j])))
+        if isinstance(opp, ActionScorer):
+            g2, a2, m2, _, _ = ce.encode_batch(
+                battles, [1] * len(live), [it["o2"] for it in live])
+            idx2, _, _ = _forward_select(opp, g2, a2, m2, args.device, sample=True, extras=False)
+        elif opp_kind is not None:
+            idx2 = [ce.select_heuristic(it["b"], 1, it["o2"], opp_kind) for it in live]
+        else:  # RandomPolicy: uniform over the legal choices, no state needed
+            idx2 = [random.randrange(len(it["b"].choices(1))) for it in live]
+        for j, it in enumerate(live):
+            ce.step_pair(it["b"], idx1[j], idx2[j], it["o1"], it["o2"])
+
+
 def _run(items, net, opp, args, *, record_buf, greedy_learner=False):
-    """Step all battles to completion, choosing actions in batched forwards each turn."""
+    """Step all battles to completion, choosing actions in batched forwards each turn.
+    Dispatches to the C++-encoder fast path; frame-stacking (_K > 1) keeps the Python
+    featurization path, which is where the frame histories live."""
+    if _K == 1:
+        return _run_fast(items, net, opp, args, record_buf=record_buf,
+                         greedy_learner=greedy_learner)
+    return _run_py(items, net, opp, args, record_buf=record_buf, greedy_learner=greedy_learner)
+
+
+def _run_py(items, net, opp, args, *, record_buf, greedy_learner=False):
+    """The original Python-featurization loop (kept for frame-stacking and as a reference)."""
     for _ in range(args.turn_limit):
         live = [it for it in items if it["b"].result() == ce.Result.Ongoing]
         if not live:
@@ -327,6 +409,7 @@ def main() -> None:
     if _K > 1:
         print(f"frame-stack: {_K} (net global dim = {GLOBAL_DIM} x {_K} = {GLOBAL_DIM * _K})")
     _STATIC = StaticData(1)  # poke-env static data used by build_state
+    register_encoder(_STATIC)  # upload the same tables into the C++ encoder (fast path)
     loaded = load_teams(args.teams_dir)
     if loaded:
         TEAMS = loaded

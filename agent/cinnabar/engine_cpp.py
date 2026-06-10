@@ -43,6 +43,8 @@ class StaticData:
         raw = data.type_chart or data.load_type_chart(gen)
         # defender-keyed: chart[DEFENDER][ATTACKER] = multiplier (verified in tools/gen_data.py)
         self._chart = {k.upper(): {a.upper(): float(v) for a, v in d.items()} for k, d in raw.items()}
+        if gen == 1:
+            register_encoder(self)  # the C++ fast paths need the same tables; idempotent
 
     @lru_cache(maxsize=None)
     def move_meta(self, name: str) -> dict:
@@ -96,6 +98,44 @@ class StaticData:
         for dt in def_types:
             mult *= self._chart.get(dt, {}).get(atk_type, 1.0)
         return mult
+
+
+def register_encoder(static: StaticData) -> None:
+    """Upload the poke-env static tables into the C++ observation encoder (idempotent).
+
+    The C++ encoder (`ce.encode` / `ce.encode_batch` / `ce.select_heuristic`) mirrors
+    build_state + featurize for throughput; it must compute from the SAME move/species/type
+    data, so we register it from this module's StaticData rather than re-deriving it in C++.
+    Parity is asserted by agent/tests/test_encoder_parity.py.
+    """
+    if ce.encoder_ready():
+        return
+    from .encoding import GLOBAL_DIM, ACTION_DIM, TYPE_ORDER, _TYPE_INDEX  # noqa: PLC0415
+    from .policy import SmartHeuristicPolicy as _SH  # noqa: PLC0415  (heuristic move sets)
+
+    if (ce.GLOBAL_DIM, ce.ACTION_DIM) != (GLOBAL_DIM, ACTION_DIM):
+        raise RuntimeError(
+            f"C++ encoder dims {(ce.GLOBAL_DIM, ce.ACTION_DIM)} != Python {(GLOBAL_DIM, ACTION_DIM)}"
+            " — rebuild engine/ after changing the encoding")
+
+    chart = [[static._chart.get(dt, {}).get(at, 1.0) for at in TYPE_ORDER] for dt in TYPE_ORDER]
+    eff_idx = {"SLP": 0, "PAR": 1, "FRZ": 2, "BRN": 3, "PSN": 4}
+    moves = {}
+    for mid in static._moves:
+        mm = static.move_meta(mid)  # ids are already normalized, so this hits the same cache
+        moves[mid] = (
+            mm["base_power"], _TYPE_INDEX.get(mm["type"], 0), mm["category"] == "STATUS",
+            mm["accuracy"], mm["fixed"] or 0.0, eff_idx.get(mm["effect_status"], -1),
+            mm["effect_chance"], mm["heals"], mm["boosts_self"], mm["lowers_foe"],
+            mm["recharge"], mm["self_destruct"],
+            mid in _SH.SLEEP_MOVES, mid in _SH.PARA_MOVES, mid in _SH.HEAL_MOVES,
+            mid == "hyperbeam",
+        )
+    species = {}
+    for sid in static._dex:
+        types = [_TYPE_INDEX[t] for t in static.species_types(sid) if t in _TYPE_INDEX]
+        species[sid] = (types, static.species_speed(sid) or -1)
+    ce.register_encoder(chart, moves, species)
 
 
 class Reveal:
