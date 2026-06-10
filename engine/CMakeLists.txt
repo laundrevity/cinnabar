@@ -8,7 +8,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Core engine: pure C++, no dependencies.
-add_library(cinnabar_engine_lib STATIC src/engine.cpp)
+add_library(cinnabar_engine_lib STATIC src/engine.cpp src/encoder.cpp)
 target_include_directories(cinnabar_engine_lib PUBLIC include)
 target_compile_options(cinnabar_engine_lib PRIVATE -Wall -Wextra)
 
@@ -34,6 +34,6 @@ if(BUILD_PYTHON)
   )
   FetchContent_MakeAvailable(pybind11)
   # Module name must match PYBIND11_MODULE(...) in bind.cpp -> `import cinnabar_engine`.
-  pybind11_add_module(cinnabar_engine bindings/bind.cpp src/engine.cpp)
+  pybind11_add_module(cinnabar_engine bindings/bind.cpp src/engine.cpp src/encoder.cpp)
   target_include_directories(cinnabar_engine PRIVATE include)
 endif()

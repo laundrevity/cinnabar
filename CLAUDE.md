@@ -66,7 +66,9 @@ cinnabar/
 ├── README.md           # human-facing intro + quickstart
 ├── docs/roadmap.md     # the phased plan in detail
 ├── engine/             # custom C++ Gen 1 engine (validated bit-for-bit vs Showdown)
-│   ├── include/cinnabar/engine.hpp + gen1_data.hpp (GENERATED) | src/engine.cpp | tests/
+│   ├── include/cinnabar/engine.hpp + encoder.hpp + gen1_data.hpp (GENERATED)
+│   ├── src/engine.cpp      # battle mechanics | src/encoder.cpp: C++ observation encoder +
+│   │                       #   heuristic pilots (bit-parity with the Python featurization; see below)
 │   ├── bindings/bind.cpp   # pybind11 module: import cinnabar_engine
 │   └── tools/              # gen_data.py (codegen) | ref_trace.js + trace_diff.py (fidelity harness)
 ├── server/             # Pokémon Showdown lives here
@@ -112,10 +114,36 @@ cinnabar/
 - **Fidelity harness (engine vs Showdown):** `cd agent && uv run python ../engine/tools/trace_diff.py sweep 200` (needs the submodule built; env vars `CINNABAR_P{1,2}_{SPECIES,TEAM,MOVE}`, `CINNABAR_VOL=1`)
 - **Self-play smoke on the engine:** `cd agent && uv run python smoke_engine.py`
 - **Train on the engine:** `cd agent && uv run python train_engine.py --opponent maxdamage --reward shaped` (`--smoke` for a tiny run; `--opponent self` for self-play)
+- **C++ observation encoder (the throughput path, June 2026):** profiling showed the engine at
+  ~250k turns/s but Python `build_state`+`featurize` eating ~80% of rollout time, so the
+  featurization now runs in C++ (`engine/src/encoder.cpp`): `ce.encode_batch` returns padded
+  numpy feature tensors, `ce.step_pair` does reveal bookkeeping + step, `ce.select_heuristic`
+  is the C++ twin of MaxDamage/SmartHeuristic/Staller. **Static data is NOT re-derived in
+  C++** — `engine_cpp.register_encoder(static)` uploads the same poke-env tables build_state
+  uses, and `tests/test_encoder_parity.py` asserts **bit-identical float32 features** and
+  decision-identical heuristic picks across whole battles (clauses, partial info, generated
+  movesets, dup-move edge cases). Net effect: rollouts/evals ~12x (→ ~2,200 battles/s),
+  training ~4.5x end-to-end (~450 battles/s; the PPO update's backward is now the floor).
+  `train_engine._run` dispatches to the fast path; `--frame-stack > 1` falls back to the
+  Python loop (`_run_py`). The per-action net got a factored first layer
+  (`ActionScorer._layer1`: global half computed once per state, not per action) — same
+  parameters/checkpoints, ~2x faster PPO updates. If you change `encoding.py`, change
+  `encoder.cpp` to match and rebuild — the parity test (and a GLOBAL_DIM check in
+  `register_encoder`) will catch drift. **Search runs on the same fast path** (~5x):
+  `search_action_values`/`_minimax` push the whole leaf loop into one `ce.search_leaves`
+  call + one batched value forward whenever the leaf is the value head or a heuristic
+  playout (`tests/test_search_fast.py` pins fast == slow per decision); a net opponent-model
+  (expert_iter `--opp-model policy`) still gets fast leaves. Only a NET-piloted *rollout
+  leaf* falls back to the per-leaf Python loop.
+- **Ladder rates search pilots (the browser configuration):** `ladder.py --search-ckpts
+  ckpt.pt` adds a SearchPilot player (`--search-rollouts/-top-k/-minimax/-opp-top-k/-opp-temp`),
+  and a `staller` baseline is included by default (`--no-staller` to drop) — raw policy,
+  search-piloted policy, and the heuristics all rank on one Elo scale, so "what is lookahead
+  worth" is a ladder read, not a one-opponent win%.
 - **Train with OU clauses:** add `--clauses` (Sleep + Freeze Clause — a 2nd foe-inflicted sleep/freeze fails). Modeled as a per-`Side` flag, **default off** so the bit-for-bit harness (clause-free `gen1customgame`) is untouched; `ladder.py --clauses` rates under the same rule. Without it the agent over-values sleep (it can sleep your whole team in training). GLOBAL_DIM gained 2 clause-perception features — warm-start old nets with `pad_checkpoint.py`.
 - **Evolve teams (team construction):** `cd agent && uv run python evolve_teams.py --ckpt models_clauses/pg_best.pt --pilots net,heuristic --pop 24 --gens 30 --clauses --out evolved` — fitness = win-rate vs a fixed anchor (`--anchor-dir`, default `teams/`) under a pilot panel; top teams written as Showdown `.txt`. Single-pass evolution coadapts to the pilot's blind spots (a weak pilot can't value Snorlax / punish over-statusing), so for real team discovery use co-training instead. Pilot ckpt must match the current GLOBAL_DIM (loaders auto-pad older ones).
 - **Co-train agent + teams (`cotrain.py`):** `cd agent && uv run python cotrain.py --init models_clauses/pg_best.pt --rounds 6 --clauses --out cotrain` — each round evolves teams vs the current agent (scored against a GROWING archive seeded from random teams, no human priors), then retrains the agent on the whole archive. Strategy emerges from the loop. Watch the per-round ladder margin-over-smart for collapse; `--dry-run` prints the commands. The emergence-pure answer to team construction (vs hand-coded constraints or hand-picked anchors).
-- **Decision-time search (engine path only):** `cd agent && uv run python search_eval.py --ckpt models_clauses/pg_best.pt --battles 100 --rollouts 3 --clauses` — 1-ply lookahead (clone+reseed the engine, value-head leaf, heuristic opponent model) plays ~**+19%** over the raw greedy policy vs the staller. The lever past the self-play ceiling: the agent computes a better move than its policy without a stronger opponent. `--sweep` maps rollouts/leaf/top-k headroom. **`--top-k N` = policy-prior gating** (search only the policy's top-N actions; plumbed through `search_eval.py` / `probe_eggy.py` / `evolve_teams.py --top-k` / both `*_search_battle` fns): without it value-leaf search *bypasses* the policy and un-learns its discipline — measured ~20–46% clause-wasted sleep clicks in search-mirror play that the raw policy never makes. The policy proposes, the value head disposes; also faster (fewer clones). **Diagnose first** (`diagnose_policy.py`): all the raw-pilot weaknesses I hypothesized (switch-loop, can't-play-defense) were refuted by measurement — the net is a competent *average* player; its holes only a strong human triggers.
+- **Decision-time search (engine path only):** `cd agent && uv run python search_eval.py --ckpt models_clauses/pg_best.pt --battles 100 --rollouts 3 --clauses` — 1-ply lookahead (clone+reseed the engine, value-head leaf, heuristic opponent model) played ~**+19%** over the raw greedy policy vs the staller *for that checkpoint*. **The lift is checkpoint-dependent, re-measure per net** (2026-06-10: on the fresh `models_fast/pg_best` league net, the same search configs measured **-8 to -11% vs the staller** even with a freshly calibrated value leaf, while the ladder still rated `+search[k3]` ~+27 Elo over raw against the full field — search helped broadly but hurt against the staller specifically). The lever past the self-play ceiling: the agent computes a better move than its policy without a stronger opponent. `--sweep` maps rollouts/leaf/top-k headroom. **`--top-k N` = policy-prior gating** (search only the policy's top-N actions; plumbed through `search_eval.py` / `probe_eggy.py` / `evolve_teams.py --top-k` / both `*_search_battle` fns): without it value-leaf search *bypasses* the policy and un-learns its discipline — measured ~20–46% clause-wasted sleep clicks in search-mirror play that the raw policy never makes. The policy proposes, the value head disposes; also faster (fewer clones). **Diagnose first** (`diagnose_policy.py`): all the raw-pilot weaknesses I hypothesized (switch-loop, can't-play-defense) were refuted by measurement — the net is a competent *average* player; its holes only a strong human triggers.
 - **Expert iteration (`expert_iter.py`, v2):** `cd agent && uv run python expert_iter.py --init models_wf/pg_best.pt --rounds 5 --games 60 --gen-teams --clauses --out ei2` — self-play where both sides move by **policy-prior gated search** (`--top-k 3`), distil the **soft search distribution** (softmax over candidate Q-values, `--tau`) + outcome (value MSE) back into the net under a **KL trust-region anchor to the frozen init** (`--anchor-coef`), with the lookahead modelling the opponent as the **current policy** (`--opp-model`). v1 (hard argmax CE, heuristic opp-model, no anchor) *degraded* the policy — those three causes are exactly what v2 fixes; `--anchor-coef 0` reproduces the v1 failure, don't. `pg_best.pt` is only written when a round beats the running best on the two-opponent eval (smart + staller). Watch BOTH eval lines per round — the v1 collapse showed first vs the staller.
 
 ## Conventions

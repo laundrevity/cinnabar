@@ -31,12 +31,25 @@ class ActionScorer(nn.Module):
             nn.Linear(hidden, 1),
         )
 
+    def _layer1(self, global_feats: torch.Tensor, action_feats: torch.Tensor) -> torch.Tensor:
+        """First layer, factored: Linear([g ++ a]) == W_g·g + W_a·a + bias, so the global
+        half — the bulk of the input — is computed once per STATE instead of once per
+        action row. Same parameters, same math (up to float summation order); profiling
+        showed the fused layer-1 matmul dominating the PPO update."""
+        l1 = self.policy_mlp[0]
+        g_dim = global_feats.shape[-1]
+        g_part = global_feats @ l1.weight[:, :g_dim].T + l1.bias       # (..., h)
+        a_part = action_feats @ l1.weight[:, g_dim:].T                 # (..., N/K, h)
+        return g_part.unsqueeze(-2) + a_part
+
+    def _head(self, hidden: torch.Tensor) -> torch.Tensor:
+        x = torch.relu(hidden)
+        x = torch.relu(self.policy_mlp[2](x))
+        return self.policy_mlp[4](x).squeeze(-1)
+
     def score_actions(self, global_feats: torch.Tensor, action_feats: torch.Tensor) -> torch.Tensor:
         """global_feats: (G,), action_feats: (N, A) -> logits: (N,)."""
-        n = action_feats.shape[0]
-        g = global_feats.unsqueeze(0).expand(n, -1)
-        x = torch.cat([g, action_feats], dim=1)
-        return self.policy_mlp(x).squeeze(-1)
+        return self._head(self._layer1(global_feats, action_feats))  # (1,h)+(N,h) -> (N,)
 
     def score_actions_batch(self, global_feats: torch.Tensor, action_feats: torch.Tensor,
                             mask: torch.Tensor) -> torch.Tensor:
@@ -45,10 +58,7 @@ class ActionScorer(nn.Module):
         global_feats: (B, G), action_feats: (B, K, A), mask: (B, K) bool
         -> logits: (B, K), with -inf at padded (masked) action slots.
         """
-        b, k, _ = action_feats.shape
-        g = global_feats.unsqueeze(1).expand(b, k, -1)
-        x = torch.cat([g, action_feats], dim=2)
-        logits = self.policy_mlp(x).squeeze(-1)
+        logits = self._head(self._layer1(global_feats, action_feats))
         return logits.masked_fill(~mask, float("-inf"))
 
     def value(self, global_feats: torch.Tensor) -> torch.Tensor:

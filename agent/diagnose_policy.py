@@ -263,7 +263,7 @@ def main() -> None:
     loopy_mirror: list = []
     _, turns_m, stall_m = behavior(cnet3, net, teams, a.battles, static, a.clauses, a.turn_limit, 20_000,
                                    counter=cnet3, names=names, loopy=loopy_mirror)
-    print(f"\n  MIRROR (net vs net — the judge's configuration):")
+    print("\n  MIRROR (net vs net — the judge's configuration):")
     print(f"    net switch rate {cnet3.switch_rate*100:5.1f}%   (vs {cnet.switch_rate*100:.1f}% against smart)")
     print(f"    re-slept rate   {cnet3.reslept_rate*100:5.1f}%")
     print(f"    avg game length {turns_m:5.1f} turns, hit turn limit {stall_m*100:.1f}%")

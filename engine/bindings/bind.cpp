@@ -1,11 +1,14 @@
 // pybind11 bindings — drive the Cinnabar Gen 1 engine from Python.
 // Minimal surface for now: build a battle, query legal choices, step, read result.
 // Enough for the smoke test and the upcoming differential harness / RL adapter.
+#include <pybind11/numpy.h>  // the C++ encoder returns feature arrays
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>  // vector / pair / string conversions
 
 #include <string>
+#include <vector>
 
+#include "cinnabar/encoder.hpp"
 #include "cinnabar/engine.hpp"
 
 namespace py = pybind11;
@@ -145,4 +148,151 @@ PYBIND11_MODULE(cinnabar_engine, m) {
 
     // team1/team2 are list[tuple[str species, list[str] moves]].
     m.def("make_battle", &make_battle, py::arg("team1"), py::arg("team2"), py::arg("seed"));
+
+    // ---- C++ observation encoder (see include/cinnabar/encoder.hpp) ------------------------
+    // Static data is registered from Python (the same poke-env tables build_state uses), so
+    // the encoder is pure arithmetic on identical inputs; a pytest asserts exact parity.
+    m.attr("GLOBAL_DIM") = enc::kGlobalDim;
+    m.attr("ACTION_DIM") = enc::kActionDim;
+
+    py::class_<enc::Observer>(m, "Observer")
+        .def(py::init<>())
+        .def("clone", [](const enc::Observer& o) { return o; })  // snapshot for search leaves
+        .def_property_readonly("mons", [](const enc::Observer& o) { return int(o.mons); })
+        .def("move_mask", [](const enc::Observer& o, int slot) {
+            return int(o.moves.at(static_cast<size_t>(slot)));
+        }, py::arg("slot"))
+        // Setters so search can convert its Python Reveal memory into an Observer.
+        .def("reveal_mon", [](enc::Observer& o, int slot) {
+            o.mons |= static_cast<uint8_t>(1u << slot);
+        }, py::arg("slot"))
+        .def("see_move", [](enc::Observer& o, int slot, int move_slot) {
+            o.moves.at(static_cast<size_t>(slot)) |= static_cast<uint8_t>(1u << move_slot);
+        }, py::arg("slot"), py::arg("move_slot"));
+
+    // chart: 15x15 [defender][attacker] floats; moves: id -> 16-tuple matching MoveMeta field
+    // order; species: id -> (type indices, base speed). See engine_cpp.register_encoder.
+    m.def("register_encoder", [](const std::vector<std::vector<double>>& chart,
+                                 const py::dict& moves, const py::dict& species) {
+        if (chart.size() != enc::kTypes) throw std::invalid_argument("chart must be 15x15");
+        double c[enc::kTypes][enc::kTypes];
+        for (int d = 0; d < enc::kTypes; ++d) {
+            if (chart[d].size() != enc::kTypes) throw std::invalid_argument("chart must be 15x15");
+            for (int a = 0; a < enc::kTypes; ++a) c[d][a] = chart[d][a];
+        }
+        enc::register_type_chart(c);
+        for (auto item : moves) {
+            auto t = item.second.cast<py::tuple>();
+            enc::MoveMeta mm;
+            mm.base_power = t[0].cast<double>();
+            mm.type_idx = t[1].cast<int>();
+            mm.is_status = t[2].cast<bool>();
+            mm.accuracy = t[3].cast<double>();
+            mm.fixed = t[4].cast<double>();
+            mm.effect_status = t[5].cast<int>();
+            mm.effect_chance = t[6].cast<double>();
+            mm.heals = t[7].cast<bool>();
+            mm.boosts_self = t[8].cast<bool>();
+            mm.lowers_foe = t[9].cast<bool>();
+            mm.recharge = t[10].cast<bool>();
+            mm.self_destruct = t[11].cast<bool>();
+            mm.h_sleep = t[12].cast<bool>();
+            mm.h_para = t[13].cast<bool>();
+            mm.h_heal = t[14].cast<bool>();
+            mm.h_hyperbeam = t[15].cast<bool>();
+            enc::register_move(item.first.cast<std::string>(), mm);
+        }
+        for (auto item : species) {
+            auto t = item.second.cast<py::tuple>();
+            auto types = t[0].cast<std::vector<int>>();
+            enc::SpeciesMeta sm;
+            for (size_t i = 0; i < types.size() && i < 2; ++i)
+                sm.types[i] = static_cast<int8_t>(types[i]);
+            sm.speed = t[1].cast<int>();
+            enc::register_species(item.first.cast<std::string>(), sm);
+        }
+    }, py::arg("chart"), py::arg("moves"), py::arg("species"));
+    m.def("encoder_ready", &enc::encoder_ready);
+
+    // Encode one player's view -> (global float32[G], actions float32[N, A]). Mutates obs
+    // (reveals the opponent's active) exactly like build_state mutates Reveal.
+    m.def("encode", [](const Battle& b, int player, enc::Observer* obs) {
+        size_t n = b.choices(player).size();
+        py::array_t<float> g(py::array::ShapeContainer{(py::ssize_t)enc::kGlobalDim});
+        py::array_t<float> a(py::array::ShapeContainer{(py::ssize_t)n, (py::ssize_t)enc::kActionDim});
+        enc::encode(b, player, obs, g.mutable_data(), n ? a.mutable_data() : nullptr);
+        return py::make_tuple(g, a);
+    }, py::arg("battle"), py::arg("player"), py::arg("observer") = nullptr);
+
+    // The training fast path: encode B battles in one call ->
+    // (glob [B,G] f32, act [B,K,A] f32, mask [B,K] bool, my_mat [B] f64, opp_mat [B] f64),
+    // K = max action count, padded rows zeroed/masked like train_engine._pad.
+    m.def("encode_batch", [](const py::sequence& battles, const py::sequence& players,
+                             const py::sequence& observers) {
+        size_t n = py::len(battles);
+        if (py::len(players) != n || py::len(observers) != n)
+            throw std::invalid_argument("encode_batch: length mismatch");
+        std::vector<Battle*> bs(n);
+        std::vector<int> ps(n);
+        std::vector<enc::Observer*> os(n);
+        size_t kmax = 1;
+        for (size_t i = 0; i < n; ++i) {
+            bs[i] = battles[i].cast<Battle*>();
+            ps[i] = players[i].cast<int>();
+            py::object o = observers[i];
+            os[i] = o.is_none() ? nullptr : o.cast<enc::Observer*>();
+            kmax = std::max(kmax, bs[i]->choices(ps[i]).size());
+        }
+        py::array_t<float> glob(py::array::ShapeContainer{(py::ssize_t)n, (py::ssize_t)enc::kGlobalDim});
+        py::array_t<float> act(py::array::ShapeContainer{(py::ssize_t)n, (py::ssize_t)kmax,
+                                                         (py::ssize_t)enc::kActionDim});
+        py::array_t<bool> mask(py::array::ShapeContainer{(py::ssize_t)n, (py::ssize_t)kmax});
+        py::array_t<double> my_mat(py::array::ShapeContainer{(py::ssize_t)n});
+        py::array_t<double> opp_mat(py::array::ShapeContainer{(py::ssize_t)n});
+        std::fill(act.mutable_data(), act.mutable_data() + n * kmax * enc::kActionDim, 0.0f);
+        std::fill(mask.mutable_data(), mask.mutable_data() + n * kmax, false);
+        for (size_t i = 0; i < n; ++i) {
+            int na = enc::encode(*bs[i], ps[i], os[i],
+                                 glob.mutable_data() + i * enc::kGlobalDim,
+                                 act.mutable_data() + i * kmax * enc::kActionDim,
+                                 my_mat.mutable_data() + i, opp_mat.mutable_data() + i);
+            bool* mrow = mask.mutable_data() + i * kmax;
+            for (int k = 0; k < na; ++k) mrow[k] = true;
+        }
+        return py::make_tuple(glob, act, mask, my_mat, opp_mat);
+    }, py::arg("battles"), py::arg("players"), py::arg("observers"));
+
+    // Record both sides' selected moves into the other side's observer, then step.
+    m.def("step_pair", &enc::step_pair, py::arg("battle"), py::arg("i1"), py::arg("i2"),
+          py::arg("obs1") = nullptr, py::arg("obs2") = nullptr);
+
+    // C++ heuristic pilots (parity-tested vs policy.py). Returns the chosen choice index.
+    auto kind_id = [](const std::string& kind) {
+        int k = kind == "maxdamage" ? 0 : kind == "smart" ? 1 : kind == "staller" ? 2 : -1;
+        if (k < 0) throw std::invalid_argument("kind must be maxdamage|smart|staller");
+        return k;
+    };
+    m.def("select_heuristic", [kind_id](const Battle& b, int player, enc::Observer* obs,
+                                        const std::string& kind) {
+        return enc::select_heuristic(b, player, obs, kind_id(kind));
+    }, py::arg("battle"), py::arg("player"), py::arg("observer") = nullptr, py::arg("kind") = "maxdamage");
+
+    // Decision-time search's leaf loop in one call (see encoder.hpp). Returns
+    // (rows [L, G] f32, direct [L] f64) — direct[l] is NaN where rows[l] should be scored
+    // by the value head; L = len(my_cands) * len(opp_cands) * rollouts.
+    m.def("search_leaves", [kind_id](const Battle& b, int player, const std::vector<int>& my_cands,
+                                     const std::vector<int>& opp_cands, int rollouts,
+                                     const std::vector<uint64_t>& seeds, const enc::Observer* obs,
+                                     int mode, const std::string& rkind, int depth, int cap) {
+        size_t L = my_cands.size() * opp_cands.size() * static_cast<size_t>(rollouts);
+        if (seeds.size() != L) throw std::invalid_argument("search_leaves: need one seed per leaf");
+        py::array_t<float> rows(py::array::ShapeContainer{(py::ssize_t)L, (py::ssize_t)enc::kGlobalDim});
+        py::array_t<double> direct(py::array::ShapeContainer{(py::ssize_t)L});
+        enc::search_leaves(b, player, my_cands, opp_cands, rollouts, seeds, obs,
+                           mode, kind_id(rkind), depth, cap,
+                           rows.mutable_data(), direct.mutable_data());
+        return py::make_tuple(rows, direct);
+    }, py::arg("battle"), py::arg("player"), py::arg("my_cands"), py::arg("opp_cands"),
+       py::arg("rollouts"), py::arg("seeds"), py::arg("observer") = nullptr,
+       py::arg("mode") = 0, py::arg("rkind") = "smart", py::arg("depth") = 0, py::arg("cap") = 150);
 }

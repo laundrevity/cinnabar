@@ -63,11 +63,11 @@ def test_roundtrip_position(static):
     ts1 = battle.team_state(0)
     assert ts1[0][0] == "Tauros" and ts1[0][4] is True       # our active
     assert abs(ts1[0][1] - 0.5) < 0.01                       # injected HP
-    assert ts1[0][2] == "par"
+    assert ts1[0][2] == "PAR"  # team_state reports the adapter's uppercase status codes
     assert ts1[1][0] == "Snorlax" and ts1[1][1] == 1.0
 
     ts2 = battle.team_state(1)
-    assert ts2[0][0] == "Chansey" and ts2[0][2] == "frz" and ts2[0][4] is True
+    assert ts2[0][0] == "Chansey" and ts2[0][2] == "FRZ" and ts2[0][4] is True
     assert abs(ts2[0][1] - 0.89) < 0.01
     assert len(ts2) == 6                                     # padded to a full team
     assert ts2[1][0] == PLACEHOLDER[0]                       # unrevealed slots = placeholder
