@@ -48,6 +48,8 @@ def main() -> None:
                          "(vs the default point-estimate opponent model)")
     ap.add_argument("--paranoia", type=float, default=1.0)
     ap.add_argument("--opp-top-k", type=int, default=0)
+    ap.add_argument("--opp-temp", type=float, default=0.0,
+                    help="quantal-response opponent weighting (overrides --paranoia)")
     ap.add_argument("--sweep", action="store_true",
                     help="sweep rollouts {1,3,6} value-leaf, a rollout-leaf config, and top-k {3,4} "
                          "to map the headroom (slow — use a small --battles, e.g. 30)")
@@ -90,7 +92,7 @@ def main() -> None:
                                    turn_limit=a.turn_limit, clauses=a.clauses, device=a.device,
                                    rollouts=rollouts, leaf=leaf, rollout_policy=rp, stats=stats,
                                    top_k=top_k, minimax=a.minimax, opp_top_k=a.opp_top_k,
-                                   paranoia=a.paranoia).result()
+                                   paranoia=a.paranoia, opp_temp=a.opp_temp).result()
             w += _p1_score(r)
         return w, stats
 
