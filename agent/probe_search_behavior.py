@@ -74,6 +74,8 @@ def main() -> None:
     ap.add_argument("--battles", type=int, default=40, help="per config per opponent")
     ap.add_argument("--paranoia", default="0.0,0.5,1.0", help="comma list to sweep")
     ap.add_argument("--leaf-depth", default="0,8", help="comma list to sweep")
+    ap.add_argument("--opp-temp", default="0", help="comma list; >0 = quantal-response opponent "
+                    "(overrides paranoia for that config)")
     ap.add_argument("--top-k", type=int, default=3)
     ap.add_argument("--opp-top-k", type=int, default=0)
     ap.add_argument("--rollouts", type=int, default=2)
@@ -100,31 +102,36 @@ def main() -> None:
     matchups = [(pick.choice(teams), pick.choice(teams), 3000 + i) for i in range(a.battles)]
     paranoias = [float(x) for x in a.paranoia.split(",")]
     depths = [int(x) for x in a.leaf_depth.split(",")]
+    temps = [float(x) for x in a.opp_temp.split(",")]
     opponents = [("smart", SmartHeuristicPolicy()), ("staller", StallerPolicy())]
 
     print(f"\nminimax knob sweep — {a.battles} paired battles/config/opponent, top-k {a.top_k}, "
           f"leaf {'ValueNet' if a.value_ckpt else 'PPO head'}, clauses {'on' if a.clauses else 'off'}\n")
     print(f"  {'config':22s} {'opponent':>8s} {'win%':>6s} {'switch%':>8s} {'maxstreak':>10s} {'loopy':>6s}")
-    for p in paranoias:
-        for d in depths:
-            for opp_name, opp in opponents:
-                tr = SwitchTracker()
-                w = 0.0
-                for t1, t2, s in matchups:
-                    tr.start_battle()
-                    r = play_search_battle(net, opp, opp_model, t1, t2, static, s, tag=f"pb{s}",
-                                           turn_limit=a.turn_limit, clauses=a.clauses,
-                                           device=a.device, rollouts=a.rollouts, top_k=a.top_k,
-                                           minimax=True, opp_top_k=a.opp_top_k, paranoia=p,
-                                           leaf_depth=d, rollout_policy=net_policy,
-                                           observer=tr).result()
-                    if r in (ce.Result.Tie, ce.Result.Ongoing):
-                        w += 0.5
-                    elif r == ce.Result.P1Win:
-                        w += 1.0
-                tr.finish()
-                print(f"  p={p:.1f} leaf-depth={d:<3d} {opp_name:>8s} {w / a.battles * 100:5.1f} "
-                      f"{tr.rate * 100:7.1f}% {tr.max_streak:10d} {tr.loopy:5d}/{a.battles}")
+    for temp in temps:
+        for p in paranoias:
+            for d in depths:
+                for opp_name, opp in opponents:
+                    tr = SwitchTracker()
+                    w = 0.0
+                    for t1, t2, s in matchups:
+                        tr.start_battle()
+                        r = play_search_battle(net, opp, opp_model, t1, t2, static, s, tag=f"pb{s}",
+                                               turn_limit=a.turn_limit, clauses=a.clauses,
+                                               device=a.device, rollouts=a.rollouts, top_k=a.top_k,
+                                               minimax=True, opp_top_k=a.opp_top_k, paranoia=p,
+                                               leaf_depth=d, rollout_policy=net_policy,
+                                               opp_temp=temp, observer=tr).result()
+                        if r in (ce.Result.Tie, ce.Result.Ongoing):
+                            w += 0.5
+                        elif r == ce.Result.P1Win:
+                            w += 1.0
+                    tr.finish()
+                    tag = f"t={temp:.2f}" if temp > 0 else f"p={p:.1f}"
+                    print(f"  {tag} leaf-depth={d:<3d} {opp_name:>8s} {w / a.battles * 100:5.1f} "
+                          f"{tr.rate * 100:7.1f}% {tr.max_streak:10d} {tr.loopy:5d}/{a.battles}")
+                if temp > 0:
+                    break  # temp overrides paranoia: don't repeat per-paranoia
 
 
 if __name__ == "__main__":

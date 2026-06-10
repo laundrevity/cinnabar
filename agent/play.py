@@ -74,6 +74,10 @@ async def main() -> None:
                              "— the point-estimate opponent model is a coward)")
     parser.add_argument("--paranoia", type=float, default=1.0,
                         help="1.0 = pure worst-case; 0.0 = mean over replies")
+    parser.add_argument("--opp-temp", type=float, default=0.0,
+                        help="quantal-response opponent: weight replies by softmax of THEIR value "
+                             "at this temperature (e.g. 0.08). Overrides --paranoia. Prices real "
+                             "threats (Explosion) at full weight, phantom threats at ~zero.")
     parser.add_argument("--opp-top-k", type=int, default=0,
                         help="gate the opponent's reply set by their policy top-k (0 = all legal)")
     parser.add_argument("--leaf-depth", type=int, default=0,
@@ -107,7 +111,7 @@ async def main() -> None:
                                  rollouts=args.rollouts, top_k=args.top_k, clauses=True,
                                  device=args.device, minimax=args.minimax,
                                  opp_top_k=args.opp_top_k, paranoia=args.paranoia,
-                                 leaf_depth=args.leaf_depth, **common)
+                                 leaf_depth=args.leaf_depth, opp_temp=args.opp_temp, **common)
         kind += f"+search[k={args.top_k},r={args.rollouts}" \
                 + (f",minimax p={args.paranoia}" if args.minimax else "") + "]"
     else:
