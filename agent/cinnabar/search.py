@@ -24,6 +24,7 @@ import torch
 
 from .encoding import encode_global, featurize
 from .engine_cpp import Reveal, build_state, reveal_move
+from .state import ActionType
 
 import cinnabar_engine as ce  # noqa: E402  (importable only after engine_cpp set the path)
 
@@ -32,6 +33,32 @@ import cinnabar_engine as ce  # noqa: E402  (importable only after engine_cpp se
 def _value(net, state, device: str) -> float:
     g = torch.tensor(encode_global(state), dtype=torch.float32, device=device)
     return float(net.value(g))
+
+
+def _will_fail(action, state) -> bool:
+    """True when this move is a DETERMINISTIC no-op right now (Gen 1 mechanics, mirrors the
+    encoding's will-fail feature): a primary status move into an already-statused active, or a
+    sleep/freeze move while the clause is spent. Search prunes these outright — relying on the
+    policy's learned weight proved checkpoint-dependent (browser game 5: Gengar spammed Hypnosis
+    x4 into a paralyzed Eggy on models_wf). Pruning provably-null actions is game logic, like not
+    searching illegal moves — not a meta prior."""
+    if action.type != ActionType.MOVE or not action.effect_status:
+        return False
+    if action.effect_status == "SLP" and any(m.status == "SLP" for m in state.opponent_team):
+        return True
+    if action.effect_status == "FRZ" and any(m.status == "FRZ" for m in state.opponent_team):
+        return True
+    return (action.category == "STATUS" and (action.effect_chance or 0.0) >= 0.999
+            and state.opponent_active is not None and bool(state.opponent_active.status))
+
+
+def _prune_null(candidates: list[int], state) -> list[int]:
+    """Drop deterministically-failing moves from the candidate set (keep the set if ALL fail)."""
+    if state is None:
+        return candidates
+    kept = [i for i in candidates
+            if i < len(state.available_actions) and not _will_fail(state.available_actions[i], state)]
+    return kept or candidates
 
 
 @torch.no_grad()
@@ -90,6 +117,7 @@ def search_action_values(battle, player, net, opp_model, static, my_spec, opp_sp
                                 reveal=copy.deepcopy(reveal) if reveal is not None else None,
                                 opp_team=opp_spec)
         candidates = _top_k_candidates(net, state, top_k, device)
+    candidates = _prune_null(candidates, state)
 
     # Model the opponent's move once (a point estimate; the agent can't see the real opponent policy).
     opp_state = build_state(battle, 1 - player, opp_spec, static, "srch_o", reveal=None, opp_team=my_spec)
@@ -119,10 +147,38 @@ def search_action_values(battle, player, net, opp_model, static, my_spec, opp_sp
     return candidates, values
 
 
+@torch.no_grad()
+def _playout_bootstrap(c, player, net, rollout_policy, static, my_spec, opp_spec, device,
+                       depth: int) -> float:
+    """Play `depth` more turns with `rollout_policy` on BOTH sides, then evaluate the value leaf
+    (terminal results return the actual outcome). Buys medium-horizon vision: a one-turn leaf
+    can't see an attrition war (browser game 5: three mons fed sequentially to a Recover-stalling
+    Starmie that Chansey walls for free) — a 10-turn playout ends inside the war's verdict.
+    Use with the CALIBRATED leaf (outcome and leaf share the [0,1] win-prob scale)."""
+    spec_p1 = my_spec if player == 0 else opp_spec
+    spec_p2 = opp_spec if player == 0 else my_spec
+    for _ in range(depth):
+        if c.result() != ce.Result.Ongoing:
+            break
+        s1 = build_state(c, 0, spec_p1, static, "bo", reveal=None, opp_team=spec_p2)
+        s2 = build_state(c, 1, spec_p2, static, "bo_o", reveal=None, opp_team=spec_p1)
+        a1 = rollout_policy.select_action(s1)
+        a2 = rollout_policy.select_action(s2)
+        c.step(c.choices(0)[a1.index], c.choices(1)[a2.index])
+    res = c.result()
+    if res != ce.Result.Ongoing:
+        if res == ce.Result.Tie:
+            return 0.5
+        return 1.0 if (res == ce.Result.P1Win) == (player == 0) else 0.0
+    leaf_state = build_state(c, player, my_spec, static, "bo_l", reveal=None, opp_team=opp_spec)
+    return _value(net, leaf_state, device)
+
+
 def search_action_values_minimax(battle, player, net, static, my_spec, opp_spec,
                                  reveal=None, device="cpu", rollouts: int = 2, rng=None,
                                  state=None, top_k: int = 3, opp_top_k: int = 0,
-                                 paranoia: float = 1.0) -> tuple[list[int], list[float]]:
+                                 paranoia: float = 1.0, leaf_depth: int = 0,
+                                 rollout_policy=None) -> tuple[list[int], list[float]]:
     """ADVERSARIAL one-turn lookahead: for each of MY gated candidates, roll the turn forward
     against EVERY plausible opponent reply (their policy top-k from their view; 0 = all their
     legal actions) and score each leaf; my candidate's value = paranoia * worst-case +
@@ -146,6 +202,7 @@ def search_action_values_minimax(battle, player, net, static, my_spec, opp_spec,
                                 reveal=copy.deepcopy(reveal) if reveal is not None else None,
                                 opp_team=opp_spec)
         candidates = _top_k_candidates(net, state, top_k, device)
+    candidates = _prune_null(candidates, state)
 
     opp_n = len(battle.choices(1 - player))
     opp_cands = list(range(opp_n))
@@ -166,10 +223,14 @@ def search_action_values_minimax(battle, player, net, static, my_spec, opp_spec,
                 theirs = c.choices(1 - player)[j]
                 c1, c2 = (mine, theirs) if player == 0 else (theirs, mine)
                 c.step(c1, c2)
-                leaf_state = build_state(c, player, my_spec, static, "srch",
-                                         reveal=copy.deepcopy(reveal) if reveal is not None else None,
-                                         opp_team=opp_spec)
-                total += _value(net, leaf_state, device)
+                if leaf_depth > 0 and rollout_policy is not None:
+                    total += _playout_bootstrap(c, player, net, rollout_policy, static,
+                                                my_spec, opp_spec, device, leaf_depth)
+                else:
+                    leaf_state = build_state(c, player, my_spec, static, "srch",
+                                             reveal=copy.deepcopy(reveal) if reveal is not None else None,
+                                             opp_team=opp_spec)
+                    total += _value(net, leaf_state, device)
             per_reply.append(total / rollouts)
         worst = min(per_reply)
         mean = sum(per_reply) / len(per_reply)

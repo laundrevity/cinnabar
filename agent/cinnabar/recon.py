@@ -139,7 +139,8 @@ class SearchPolicyPlayer(PolicyPlayer):
 
     def __init__(self, policy, net, opp_model, *args, rollouts: int = 3, top_k: int = 3,
                  clauses: bool = True, device: str = "cpu", minimax: bool = False,
-                 opp_top_k: int = 0, paranoia: float = 1.0, **kwargs) -> None:
+                 opp_top_k: int = 0, paranoia: float = 1.0, leaf_depth: int = 0,
+                 **kwargs) -> None:
         super().__init__(policy, *args, **kwargs)
         self._net = net
         self._opp_model = opp_model
@@ -150,6 +151,7 @@ class SearchPolicyPlayer(PolicyPlayer):
         self._minimax = minimax
         self._opp_top_k = opp_top_k
         self._paranoia = paranoia
+        self._leaf_depth = leaf_depth
         self._recon_seed = 1000
         self.search_moves = 0
         self.fallback_moves = 0
@@ -178,7 +180,8 @@ class SearchPolicyPlayer(PolicyPlayer):
                 recon, 0, self._net, self._static, spec1, spec2,
                 reveal=None, device=self._device, rollouts=self._rollouts,
                 state=state, top_k=self._top_k, opp_top_k=self._opp_top_k,
-                paranoia=self._paranoia)
+                paranoia=self._paranoia, leaf_depth=self._leaf_depth,
+                rollout_policy=self._policy)
         else:
             cands, values = search_action_values(
                 recon, 0, self._net, self._opp_model, self._static, spec1, spec2,

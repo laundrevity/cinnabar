@@ -76,6 +76,10 @@ async def main() -> None:
                         help="1.0 = pure worst-case; 0.0 = mean over replies")
     parser.add_argument("--opp-top-k", type=int, default=0,
                         help="gate the opponent's reply set by their policy top-k (0 = all legal)")
+    parser.add_argument("--leaf-depth", type=int, default=0,
+                        help="minimax only: play N extra turns (raw policy both sides) before "
+                             "evaluating the leaf — medium-horizon vision for attrition wars. "
+                             "Use with --value-ckpt (outcome and leaf share the win-prob scale).")
     args = parser.parse_args()
 
     policy, kind = build_policy(args)
@@ -102,7 +106,8 @@ async def main() -> None:
         bot = SearchPolicyPlayer(policy=policy, net=search_net, opp_model=SmartHeuristicPolicy(),
                                  rollouts=args.rollouts, top_k=args.top_k, clauses=True,
                                  device=args.device, minimax=args.minimax,
-                                 opp_top_k=args.opp_top_k, paranoia=args.paranoia, **common)
+                                 opp_top_k=args.opp_top_k, paranoia=args.paranoia,
+                                 leaf_depth=args.leaf_depth, **common)
         kind += f"+search[k={args.top_k},r={args.rollouts}" \
                 + (f",minimax p={args.paranoia}" if args.minimax else "") + "]"
     else:
