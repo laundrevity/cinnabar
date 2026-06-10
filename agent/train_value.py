@@ -38,11 +38,31 @@ from cinnabar.encoding import GLOBAL_DIM, encode_global
 from cinnabar.engine_cpp import Reveal, StaticData, build_state, load_teams, reveal_move
 from cinnabar.policy import MaxDamagePolicy, RandomPolicy, SmartHeuristicPolicy, StallerPolicy
 from cinnabar.rl.net import ValueNet
-from ladder import _load_net
+from cinnabar.search import search_action_values_minimax
+from ladder import _load_net, _load_value
 
 import cinnabar_engine as ce  # noqa: E402
 
 STATUSES = ["SLP", "PAR", "FRZ", "BRN", "PSN"]
+
+
+class EngineSearchPilot:
+    """A data-generation pilot that plays by the DEPLOYED search configuration (minimax + gating +
+    null-prune, p=0.5 from the knob sweep). Value iteration: the leaf's training games are played
+    by the agent the leaf will serve — strong-play positions (freeze-fishing duels, win-condition
+    management) finally exist in the data. ~50x slower than a policy pilot; use via --search-frac."""
+
+    def __init__(self, net, static, top_k=3, opp_top_k=0, rollouts=2, paranoia=0.5, device="cpu"):
+        self.net, self.static = net, static
+        self.top_k, self.opp_top_k = top_k, opp_top_k
+        self.rollouts, self.paranoia, self.device = rollouts, paranoia, device
+
+    def pick(self, battle, player, state, my_spec, opp_spec):
+        cands, vals = search_action_values_minimax(
+            battle, player, self.net, self.static, my_spec, opp_spec,
+            reveal=None, device=self.device, rollouts=self.rollouts, state=state,
+            top_k=self.top_k, opp_top_k=self.opp_top_k, paranoia=self.paranoia)
+        return state.available_actions[cands[max(range(len(vals)), key=vals.__getitem__)]]
 
 
 def play_collect(p1, p2, team1, team2, static, seed, clauses, turn_limit, rng,
@@ -64,14 +84,20 @@ def play_collect(p1, p2, team1, team2, static, seed, clauses, turn_limit, rng,
     r1, r2 = Reveal(), Reveal()
     feats: list[tuple[int, list[float]]] = []
     turns = 0
+
+    def choose(p, player, state, my, opp):
+        if isinstance(p, EngineSearchPilot):
+            return p.pick(battle, player, state, my, opp)
+        return p.select_action(state)
+
     while battle.result() == ce.Result.Ongoing and turns < turn_limit:
         turns += 1
         s1 = build_state(battle, 0, spec1, static, "tv", reveal=r1, opp_team=spec2)
         s2 = build_state(battle, 1, spec2, static, "tv_o", reveal=r2, opp_team=spec1)
         feats.append((0, encode_global(s1)))
         feats.append((1, encode_global(s2)))
-        a1 = p1.select_action(s1)
-        a2 = p2.select_action(s2)
+        a1 = choose(p1, 0, s1, spec1, spec2)
+        a2 = choose(p2, 1, s2, spec2, spec1)
         reveal_move(r1, s2, a2)
         reveal_move(r2, s1, a1)
         battle.step(battle.choices(0)[a1.index], battle.choices(1)[a2.index])
@@ -98,6 +124,12 @@ def main() -> None:
     ap.add_argument("--games", type=int, default=3000)
     ap.add_argument("--afflict", type=float, default=0.35,
                     help="per-side prob of a random pre-game status injection (incapacitation coverage)")
+    ap.add_argument("--search-frac", type=float, default=0.0,
+                    help="prob a side is piloted by the DEPLOYED search config (minimax p=0.5, "
+                         "gated, null-pruned) — value iteration; ~50x slower per search game")
+    ap.add_argument("--search-value-ckpt", default=None,
+                    help="leaf for the search PILOT (e.g. the previous value_best.pt — iteration "
+                         "k trains on games judged by iteration k-1's leaf). Default: PPO head.")
     ap.add_argument("--gen-frac", type=float, default=0.5, help="fraction of games on generated teams")
     ap.add_argument("--epochs", type=int, default=10)
     ap.add_argument("--batch", type=int, default=4096)
@@ -128,6 +160,18 @@ def main() -> None:
         pass
     pilots = [net_pol, net_pol, sampled, SmartHeuristicPolicy(), SmartHeuristicPolicy(),
               MaxDamagePolicy(), StallerPolicy(), RandomPolicy(seed=a.seed)]
+    searcher = None
+    if a.search_frac > 0:
+        search_net = net_pol.net
+        if a.search_value_ckpt:
+            from cinnabar.rl.net import HybridNet
+            search_net = HybridNet(net_pol.net, _load_value(a.search_value_ckpt, a.hidden, a.device))
+        searcher = EngineSearchPilot(search_net, static, device=a.device)
+
+    def pick_pilot():
+        if searcher is not None and rng.random() < a.search_frac:
+            return searcher
+        return rng.choice(pilots)
 
     def pick_team():
         if rng.random() < a.gen_frac:
@@ -135,10 +179,10 @@ def main() -> None:
         return rng.choice(teams)
 
     print(f"collecting: {a.games} games, afflict {a.afflict}, gen-frac {a.gen_frac}, "
-          f"clauses {'on' if a.clauses else 'off'}")
+          f"search-frac {a.search_frac}, clauses {'on' if a.clauses else 'off'}")
     data: list[tuple[list[float], float]] = []
     for i in range(a.games):
-        p1, p2 = rng.choice(pilots), rng.choice(pilots)
+        p1, p2 = pick_pilot(), pick_pilot()
         data += play_collect(p1, p2, pick_team(), pick_team(), static, 1000 + i,
                              a.clauses, a.turn_limit, rng, a.afflict)
         if (i + 1) % 500 == 0:
