@@ -21,10 +21,12 @@ import copy
 import math
 import random as _random
 
+import numpy as np
 import torch
 
 from .encoding import encode_global, featurize
-from .engine_cpp import Reveal, build_state, reveal_move
+from .engine_cpp import Reveal, _to_id, build_state, reveal_move
+from .policy import MaxDamagePolicy, SmartHeuristicPolicy, StallerPolicy
 from .state import ActionType
 
 import cinnabar_engine as ce  # noqa: E402  (importable only after engine_cpp set the path)
@@ -76,6 +78,79 @@ def _top_k_candidates(net, state, k: int, device: str) -> list[int]:
     return torch.topk(logits, k).indices.tolist()
 
 
+# ---- C++ fast path -----------------------------------------------------------------------
+# The expensive part of search is the LEAF loop: candidates x rollouts x (clone, step,
+# build_state, encode, value). With the C++ encoder (bit-parity with build_state+featurize,
+# see tests/test_encoder_parity.py) the leaves encode in C++ and the value head runs as ONE
+# batched forward per decision. Used automatically when the opponent-model / rollout pilots
+# are the heuristic policies (which have C++ twins); anything else falls back to the
+# original per-leaf Python path. Public APIs and RNG consumption are unchanged.
+
+def _heuristic_kind(policy) -> str | None:
+    """The C++ twin's name for a heuristic pilot, or None (no twin -> Python fallback)."""
+    if isinstance(policy, StallerPolicy):
+        return "staller"
+    if isinstance(policy, SmartHeuristicPolicy):
+        return "smart"
+    if isinstance(policy, MaxDamagePolicy):
+        return "maxdamage"
+    return None
+
+
+def _obs_from_reveal(reveal, opp_team) -> "ce.Observer | None":
+    """Convert the Python Reveal memory into the C++ Observer once per decision (the leaves
+    then snapshot it with .clone() instead of deepcopying the Reveal per leaf)."""
+    if reveal is None:
+        return None
+    obs = ce.Observer()
+    for i in reveal.mons:
+        obs.reveal_mon(i)
+    for slot, (sp, mvs) in enumerate(opp_team):
+        seen = reveal.moves.get(sp)
+        if not seen:
+            continue
+        for k, mv in enumerate(mvs):
+            if _to_id(mv) in seen:
+                obs.see_move(slot, k)
+    return obs
+
+
+@torch.no_grad()
+def _resolve_leaves(net, rows, direct, device: str) -> list[float]:
+    """Combine ce.search_leaves output into per-leaf values: terminal/playout results come
+    back directly; NaN entries mean 'score this row with the value head' — one batched
+    forward for all of them."""
+    flat = direct.tolist()
+    pending = np.nonzero(np.isnan(direct))[0]
+    if len(pending):
+        g = torch.from_numpy(rows[pending])
+        if device != "cpu":
+            g = g.to(device)
+        vals = net.value(g).tolist()
+        for k, v in zip(pending.tolist(), vals):
+            flat[k] = v
+    return flat
+
+
+def _reply_value(per_reply: list[float], opp_temp: float, paranoia: float) -> float:
+    """Aggregate the per-opponent-reply leaf values into one candidate value: quantal-response
+    weighting when opp_temp > 0, else the paranoia-blended worst case."""
+    if opp_temp > 0:
+        # QUANTAL-RESPONSE opponent: weight each reply by how good it is FOR THEM
+        # (their value = 1 - mine, zero-sum), softmax at temperature opp_temp. The paranoia
+        # scalar failed from both ends (browser game 8: p=0.5 averaged away a telegraphed
+        # Explosion; p=1.0 hedged into the switch carousel). Threat-weighting prices the
+        # Explosion at ~full weight exactly when it IS their best move, and prices phantom
+        # threats they'd never click at ~zero — real nukes dodged, no worst-case hedging.
+        mx = max(1.0 - v for v in per_reply)
+        ws = [math.exp(((1.0 - v) - mx) / opp_temp) for v in per_reply]
+        tot_w = sum(ws)
+        return sum(w * v for w, v in zip(ws, per_reply)) / tot_w
+    worst = min(per_reply)
+    mean = sum(per_reply) / len(per_reply)
+    return paranoia * worst + (1.0 - paranoia) * mean
+
+
 @torch.no_grad()
 def _playout_value(c, player, net, rollout_policy, static, my_spec, opp_spec, device, cap: int) -> float:
     """Play the clone to terminal with `rollout_policy` on both sides; return win(1)/tie(0.5)/loss(0)
@@ -119,6 +194,33 @@ def search_action_values(battle, player, net, opp_model, static, my_spec, opp_sp
                                 opp_team=opp_spec)
         candidates = _top_k_candidates(net, state, top_k, device)
     candidates = _prune_null(candidates, state)
+
+    # Fast path: the whole leaf loop (clone, reseed, step, playout, encode) runs in ONE C++
+    # call, then the value head scores all leaves in one batched forward. Same dice, same
+    # leaves. The opponent model is consulted once per decision either way — a heuristic
+    # model picks via its C++ twin, anything else (e.g. expert_iter's policy opponent-model)
+    # picks the Python way; only a NET-piloted rollout leaf still needs the slow loop below.
+    opp_kind = _heuristic_kind(opp_model)
+    use_rollout_leaf = leaf == "rollout" and rollout_policy is not None
+    rkind = _heuristic_kind(rollout_policy) if use_rollout_leaf else None
+    if not use_rollout_leaf or rkind is not None:
+        if opp_kind is not None:
+            opp_idx = ce.select_heuristic(battle, 1 - player, None, opp_kind)
+        else:
+            opp_state = build_state(battle, 1 - player, opp_spec, static, "srch_o",
+                                    reveal=None, opp_team=my_spec)
+            opp_idx = opp_model.select_action(opp_state).index if opp_state.available_actions else 0
+            if opp_idx >= len(battle.choices(1 - player)):
+                opp_idx = 0
+        obs = _obs_from_reveal(reveal, opp_spec)
+        seeds = [rng.getrandbits(63) for _ in range(len(candidates) * rollouts)]
+        rows, direct = ce.search_leaves(battle, player, candidates, [opp_idx], rollouts, seeds,
+                                        obs, 1 if use_rollout_leaf else 0, rkind or "smart",
+                                        0, rollout_cap)
+        flat = _resolve_leaves(net, rows, direct, device)
+        values = [sum(flat[k * rollouts:(k + 1) * rollouts]) / rollouts
+                  for k in range(len(candidates))]
+        return candidates, values
 
     # Model the opponent's move once (a point estimate; the agent can't see the real opponent policy).
     opp_state = build_state(battle, 1 - player, opp_spec, static, "srch_o", reveal=None, opp_team=my_spec)
@@ -213,9 +315,30 @@ def search_action_values_minimax(battle, player, net, static, my_spec, opp_spec,
                                 reveal=None, opp_team=my_spec)
         opp_cands = _top_k_candidates(net, opp_state, opp_top_k, device)
 
-    values: list[float] = []
+    # Fast path (one C++ call for all leaves + one batched value forward) whenever the leaf
+    # is either the plain value head or a heuristic-piloted bootstrap playout.
+    use_bootstrap = leaf_depth > 0 and rollout_policy is not None
+    rkind = _heuristic_kind(rollout_policy) if use_bootstrap else None
+    if not use_bootstrap or rkind is not None:
+        obs = _obs_from_reveal(reveal, opp_spec)
+        seeds = [rng.getrandbits(63)
+                 for _ in range(len(candidates) * len(opp_cands) * rollouts)]
+        rows, direct = ce.search_leaves(battle, player, candidates, opp_cands, rollouts, seeds,
+                                        obs, 2 if use_bootstrap else 0, rkind or "smart",
+                                        leaf_depth, 150)
+        flat = _resolve_leaves(net, rows, direct, device)
+        values, idx = [], 0
+        for _ in candidates:
+            per_reply: list[float] = []
+            for _ in opp_cands:
+                per_reply.append(sum(flat[idx:idx + rollouts]) / rollouts)
+                idx += rollouts
+            values.append(_reply_value(per_reply, opp_temp, paranoia))
+        return candidates, values
+
+    values = []
     for i in candidates:
-        per_reply: list[float] = []
+        per_reply = []
         for j in opp_cands:
             total = 0.0
             for _ in range(rollouts):
@@ -225,30 +348,10 @@ def search_action_values_minimax(battle, player, net, static, my_spec, opp_spec,
                 theirs = c.choices(1 - player)[j]
                 c1, c2 = (mine, theirs) if player == 0 else (theirs, mine)
                 c.step(c1, c2)
-                if leaf_depth > 0 and rollout_policy is not None:
-                    total += _playout_bootstrap(c, player, net, rollout_policy, static,
-                                                my_spec, opp_spec, device, leaf_depth)
-                else:
-                    leaf_state = build_state(c, player, my_spec, static, "srch",
-                                             reveal=copy.deepcopy(reveal) if reveal is not None else None,
-                                             opp_team=opp_spec)
-                    total += _value(net, leaf_state, device)
+                total += _playout_bootstrap(c, player, net, rollout_policy, static,
+                                            my_spec, opp_spec, device, leaf_depth)
             per_reply.append(total / rollouts)
-        if opp_temp > 0:
-            # QUANTAL-RESPONSE opponent: weight each reply by how good it is FOR THEM
-            # (their value = 1 - mine, zero-sum), softmax at temperature opp_temp. The paranoia
-            # scalar failed from both ends (browser game 8: p=0.5 averaged away a telegraphed
-            # Explosion; p=1.0 hedged into the switch carousel). Threat-weighting prices the
-            # Explosion at ~full weight exactly when it IS their best move, and prices phantom
-            # threats they'd never click at ~zero — real nukes dodged, no worst-case hedging.
-            mx = max(1.0 - v for v in per_reply)
-            ws = [math.exp(((1.0 - v) - mx) / opp_temp) for v in per_reply]
-            tot_w = sum(ws)
-            values.append(sum(w * v for w, v in zip(ws, per_reply)) / tot_w)
-        else:
-            worst = min(per_reply)
-            mean = sum(per_reply) / len(per_reply)
-            values.append(paranoia * worst + (1.0 - paranoia) * mean)
+        values.append(_reply_value(per_reply, opp_temp, paranoia))
     return candidates, values
 
 
