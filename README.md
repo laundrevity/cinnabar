@@ -10,7 +10,9 @@ The project has two halves:
    [Pokémon Showdown](https://github.com/smogon/pokemon-showdown)** — same teams, same RNG
    seed, same choices produce identical state every turn, across tens of thousands of battles.
 2. **A reinforcement-learning agent** (`agent/`) that trains on that engine **in-process** via
-   PPO self-play at ~500 battles/sec — no Showdown server, no network in the training loop.
+   PPO self-play — no Showdown server, no network in the training loop. Observation encoding
+   also runs in C++ (bit-parity-tested against the Python encoder), so rollouts/evaluations
+   run at thousands of battles/sec and training is update-bound, not simulation-bound.
 
 The engine-free decision core (state / policy / encoding / RL) sits behind adapters, so the
 same agent code runs against either Showdown (via `poke-env`) or the custom C++ engine.

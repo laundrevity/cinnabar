@@ -85,6 +85,18 @@ uv run python smoke_engine.py                  # RandomPolicy self-play on the e
 uv run python train_engine.py --smoke          # vectorized PPO on the engine
 ```
 
+### C++ observation encoder (`src/encoder.cpp`)
+
+The RL observation (`encoding.py`'s feature vectors) is also computed in C++:
+`encode_batch` (padded numpy feature tensors for a batch of battles), `step_pair`
+(reveal bookkeeping + step), `select_heuristic` (C++ twins of the Python heuristic
+pilots) and `search_leaves` (the decision-time-search leaf loop in one call). Static
+move/species/type metadata is **registered from Python's poke-env tables at startup**
+(`engine_cpp.register_encoder`), never re-derived here, and
+`agent/tests/test_encoder_parity.py` asserts bit-identical float32 features and
+decision-identical heuristic picks against the Python encoder across whole battles —
+the same differential-testing philosophy as the Showdown harness, one layer up.
+
 ## Layout
 
 ```
@@ -93,6 +105,8 @@ engine/
   include/cinnabar/engine.hpp       # public API
   include/cinnabar/gen1_data.hpp    # GENERATED: type chart + 151 species + 167 moves (do not edit)
   src/engine.cpp                    # mechanics; data sourced from gen1_data.hpp
+  include/cinnabar/encoder.hpp      # C++ observation encoder API (see above)
+  src/encoder.cpp                   # encoder + heuristic-pilot twins (parity-tested vs Python)
   tests/test_engine.cpp             # unit tests (hand-computed expectations)
   tools/gen_data.py                 # regenerate gen1_data.hpp from Showdown (poke-env)
   tools/ref_trace.js                # Showdown reference trace (drives the submodule sim)

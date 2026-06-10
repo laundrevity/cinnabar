@@ -25,10 +25,12 @@ import torch
 
 import train_engine as T  # select_batch (greedy net action), _STATIC machinery
 from cinnabar.encoding import ACTION_DIM, GLOBAL_DIM
-from cinnabar.engine_cpp import StaticData, load_teams, play_battle
+from cinnabar.engine_cpp import Reveal, StaticData, build_state, load_teams, reveal_move
 import cinnabar_engine as ce  # noqa: E402
-from cinnabar.policy import MaxDamagePolicy, Policy, RandomPolicy, SmartHeuristicPolicy
+from cinnabar.policy import (MaxDamagePolicy, Policy, RandomPolicy, SmartHeuristicPolicy,
+                             StallerPolicy)
 from cinnabar.rl.net import ActionScorer
+from cinnabar.search import search_action_index, search_action_values_minimax
 from cinnabar.state import BattleState
 
 
@@ -76,16 +78,74 @@ def _load_value(path: str, hidden: int, device: str):
     return vnet
 
 
+class PolicyPilot:
+    """A ladder seat driven by a Policy (heuristics, NetPolicy): picks from the BattleState."""
+
+    def __init__(self, policy: Policy) -> None:
+        self.policy = policy
+
+    def choose(self, battle, side, state, reveal, my_spec, opp_spec, static, rng) -> int:
+        return self.policy.select_action(state).index
+
+
+class SearchPilot:
+    """A ladder seat driven by decision-time search on the live battle — the configuration
+    that actually plays in the browser (play.py). Rating it on the same Elo scale as the
+    raw checkpoints measures what lookahead is worth, not just that it helps vs one fixed
+    opponent (search_eval's job)."""
+
+    def __init__(self, net, *, rollouts=3, top_k=3, minimax=False, opp_top_k=0,
+                 opp_temp=0.0, device="cpu") -> None:
+        self.net, self.device = net, device
+        self.rollouts, self.top_k = rollouts, top_k
+        self.minimax, self.opp_top_k, self.opp_temp = minimax, opp_top_k, opp_temp
+        self.opp_model = SmartHeuristicPolicy()  # the assumed opponent inside the lookahead
+
+    def choose(self, battle, side, state, reveal, my_spec, opp_spec, static, rng) -> int:
+        if self.minimax:
+            cands, vals = search_action_values_minimax(
+                battle, side, self.net, static, my_spec, opp_spec, reveal=reveal,
+                device=self.device, rollouts=self.rollouts, rng=rng, state=state,
+                top_k=self.top_k, opp_top_k=self.opp_top_k, opp_temp=self.opp_temp)
+            return cands[max(range(len(vals)), key=vals.__getitem__)]
+        return search_action_index(
+            battle, side, self.net, self.opp_model, static, my_spec, opp_spec, reveal=reveal,
+            device=self.device, rollouts=self.rollouts, rng=rng, state=state, top_k=self.top_k)
+
+
+def _play_one(pa, pb, t1, t2, static, seed, turn_limit, clauses, rng):
+    """One battle between two pilots (pa as P1). Mirrors play_search_battle's loop: both
+    sides keep a Reveal memory, see each other's selected moves, and step together."""
+    spec1 = [(s, list(m)) for s, m in t1]
+    spec2 = [(s, list(m)) for s, m in t2]
+    b = ce.make_battle(spec1, spec2, seed)
+    if clauses:
+        b.set_clauses(True)
+    r1, r2 = Reveal(), Reveal()
+    turns = 0
+    while b.result() == ce.Result.Ongoing and turns < turn_limit:
+        turns += 1
+        s1 = build_state(b, 0, spec1, static, "lad", reveal=r1, opp_team=spec2)
+        s2 = build_state(b, 1, spec2, static, "lad_o", reveal=r2, opp_team=spec1)
+        i1 = pa.choose(b, 0, s1, r1, spec1, spec2, static, rng)
+        i2 = pb.choose(b, 1, s2, r2, spec2, spec1, static, rng)
+        a1, a2 = s1.available_actions[i1], s2.available_actions[i2]
+        reveal_move(r1, s2, a2)
+        reveal_move(r2, s1, a1)
+        b.step(b.choices(0)[a1.index], b.choices(1)[a2.index])
+    return b.result()
+
+
 def _play(p1, p2, teams, n, base, mirror, static, turn_limit, pick_team=None, clauses=False):
     """Return p1's score (win=1, tie=0.5) over n games, split across both lead positions."""
     pick_team = pick_team or (lambda: random.choice(teams))
+    rng = random.Random(base * 977 + 13)  # search dice (policy pilots ignore it)
     score = 0.0
     for i in range(n):
         t1 = pick_team()
         t2 = t1 if mirror else pick_team()
         a, b = (p1, p2) if i % 2 == 0 else (p2, p1)  # alternate who leads (cancels P1 edge)
-        r = play_battle(a, b, t1, t2, static, base + i, tag=f"{base}_{i}", turn_limit=turn_limit,
-                        clauses=clauses).result()
+        r = _play_one(a, b, t1, t2, static, base + i, turn_limit, clauses, rng)
         p1_is_a = i % 2 == 0
         if r == ce.Result.Tie or r == ce.Result.Ongoing:
             score += 0.5
@@ -133,6 +193,17 @@ def main() -> None:
     ap.add_argument("--frame-stack", type=int, default=1, help="stack last K turns' globals (match training)")
     ap.add_argument("--clauses", action="store_true",
                     help="enable OU Sleep + Freeze Clause (match --clauses training / the real format)")
+    ap.add_argument("--search-ckpts", nargs="*", default=[],
+                    help="checkpoints to rate as SEARCH pilots (decision-time lookahead, the "
+                         "browser configuration) — same Elo scale as the raw checkpoints")
+    ap.add_argument("--search-rollouts", type=int, default=3)
+    ap.add_argument("--search-top-k", type=int, default=3)
+    ap.add_argument("--search-minimax", action="store_true",
+                    help="search pilots use adversarial lookahead (with --search-opp-top-k/temp)")
+    ap.add_argument("--search-opp-top-k", type=int, default=3)
+    ap.add_argument("--search-opp-temp", type=float, default=0.0)
+    ap.add_argument("--no-staller", action="store_true",
+                    help="drop the staller baseline (it slows pairs down a little)")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     random.seed(a.seed)
@@ -150,12 +221,22 @@ def main() -> None:
         rosters = movesets.rosters_from_teams(teams)
         pick_team = lambda: movesets.sample_team(random.choice(rosters))  # noqa: E731
 
-    players: list[tuple[str, Policy]] = [
-        ("random", RandomPolicy()), ("maxdamage", MaxDamagePolicy()), ("smart", SmartHeuristicPolicy()),
+    players: list[tuple[str, object]] = [
+        ("random", PolicyPilot(RandomPolicy())), ("maxdamage", PolicyPilot(MaxDamagePolicy())),
+        ("smart", PolicyPilot(SmartHeuristicPolicy())),
     ]
+    if not a.no_staller:
+        players.append(("staller", PolicyPilot(StallerPolicy())))
     for c in a.ckpts:
         players.append((Path(c).parent.name + "/" + Path(c).stem,
-                        _load_net(c, a.hidden, a.device, max(1, a.frame_stack))))
+                        PolicyPilot(_load_net(c, a.hidden, a.device, max(1, a.frame_stack)))))
+    for c in a.search_ckpts:
+        tag = "mm" if a.search_minimax else f"k{a.search_top_k}"
+        players.append((Path(c).parent.name + "/" + Path(c).stem + f"+search[{tag}]",
+                        SearchPilot(_load_net(c, a.hidden, a.device, 1).net,
+                                    rollouts=a.search_rollouts, top_k=a.search_top_k,
+                                    minimax=a.search_minimax, opp_top_k=a.search_opp_top_k,
+                                    opp_temp=a.search_opp_temp, device=a.device)))
 
     names = [n for n, _ in players]
     k = len(players)
