@@ -280,6 +280,25 @@ def _make_battles(n, base):
 _STATIC: StaticData | None = None  # set in main(); the poke-env static-data cache for build_state
 
 
+def _stack_rows(histories, glob, k):
+    """numpy twin of encoding.stack_global for the fast path: per battle, the last k global
+    rows concatenated (oldest first, zero-padded at the front on early turns). `histories`
+    hold each battle's previous k-1 rows and are updated in place."""
+    import numpy as np
+
+    b, g = glob.shape
+    out = np.zeros((b, g * k), dtype=np.float32)
+    for i in range(b):
+        frames = histories[i][-(k - 1):] + [glob[i]]
+        off = g * (k - len(frames))
+        for fr in frames:
+            out[i, off:off + g] = fr
+            off += g
+        histories[i].append(glob[i].copy())
+        del histories[i][:-(k - 1)]
+    return out
+
+
 def _forward_select(net, glob, act, mask, device, *, sample, extras):
     """One batched forward straight over encode_batch's numpy outputs. Returns
     (chosen indices, behaviour log-probs or None, values or None)."""
@@ -311,9 +330,11 @@ def _run_fast(items, net, opp, args, *, record_buf, greedy_learner=False):
     if not isinstance(opp, ActionScorer):  # map heuristic pilots to their C++ twins
         from cinnabar.search import _heuristic_kind  # one mapping for search + training
         opp_kind = _heuristic_kind(opp)
-    for it in items:  # tolerate items built without observers (e.g. eval_ckpt's)
+    for it in items:  # tolerate items built without observers/histories (e.g. eval_ckpt's)
         it.setdefault("o1", ce.Observer())
         it.setdefault("o2", ce.Observer())
+        it.setdefault("h0", [])
+        it.setdefault("h1", [])
     for _ in range(args.turn_limit):
         live = [it for it in items if it["b"].result() == ce.Result.Ongoing]
         if not live:
@@ -321,6 +342,8 @@ def _run_fast(items, net, opp, args, *, record_buf, greedy_learner=False):
         battles = [it["b"] for it in live]
         glob, act, mask, mat, omat = ce.encode_batch(
             battles, [0] * len(live), [it["o1"] for it in live])
+        if _K > 1:  # frame-stacking: the net sees the last K turns' globals
+            glob = _stack_rows([it["h0"] for it in live], glob, _K)
         idx1, beh, vals = _forward_select(net, glob, act, mask, args.device,
                                           sample=not greedy_learner,
                                           extras=record_buf is not None)
@@ -333,6 +356,8 @@ def _run_fast(items, net, opp, args, *, record_buf, greedy_learner=False):
         if isinstance(opp, ActionScorer):
             g2, a2, m2, _, _ = ce.encode_batch(
                 battles, [1] * len(live), [it["o2"] for it in live])
+            if _K > 1:
+                g2 = _stack_rows([it["h1"] for it in live], g2, _K)
             idx2, _, _ = _forward_select(opp, g2, a2, m2, args.device, sample=True, extras=False)
         elif opp_kind is not None:
             idx2 = [ce.select_heuristic(it["b"], 1, it["o2"], opp_kind) for it in live]
@@ -343,13 +368,10 @@ def _run_fast(items, net, opp, args, *, record_buf, greedy_learner=False):
 
 
 def _run(items, net, opp, args, *, record_buf, greedy_learner=False):
-    """Step all battles to completion, choosing actions in batched forwards each turn.
-    Dispatches to the C++-encoder fast path; frame-stacking (_K > 1) keeps the Python
-    featurization path, which is where the frame histories live."""
-    if _K == 1:
-        return _run_fast(items, net, opp, args, record_buf=record_buf,
-                         greedy_learner=greedy_learner)
-    return _run_py(items, net, opp, args, record_buf=record_buf, greedy_learner=greedy_learner)
+    """Step all battles to completion, choosing actions in batched forwards each turn —
+    always on the C++-encoder fast path (frame-stacking included via _stack_rows)."""
+    return _run_fast(items, net, opp, args, record_buf=record_buf,
+                     greedy_learner=greedy_learner)
 
 
 def _run_py(items, net, opp, args, *, record_buf, greedy_learner=False):
