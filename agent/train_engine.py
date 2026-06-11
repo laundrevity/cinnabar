@@ -103,6 +103,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-battles", type=int, default=200)
     p.add_argument("--ckpt-every", type=int, default=25)
+    p.add_argument("--opponent-ckpt", default=None,
+                   help="train against this FROZEN checkpoint (overrides --opponent): the "
+                        "best-response/exploiter mode. Its greedy win-rate vs the target is the "
+                        "exploitability read-out (printed per eval). Hidden size is inferred "
+                        "from the checkpoint; --anchor-frac still mixes anchor iters in.")
+    p.add_argument("--pool-ckpts", nargs="*", default=[],
+                   help="league: seed the opponent pool with these frozen checkpoints (e.g. a "
+                        "trained exploiter — one manual PSRO round)")
     p.add_argument("--out", default="models_engine")
     p.add_argument("--init", default=None)
     p.add_argument("--seed", type=int, default=0)
@@ -400,6 +408,23 @@ def _snapshot(net, args):
     return s
 
 
+def _load_frozen(path: str, device: str):
+    """Load a checkpoint as a frozen opponent net. Hidden size is inferred from the weights
+    (so a 128-wide exploiter can train against a 256-wide target and vice versa); older
+    checkpoints are auto-padded to the current feature dims."""
+    sd = torch.load(path, map_location=device)
+    hidden = sd["policy_mlp.0.weight"].shape[0]
+    if (sd["policy_mlp.0.weight"].shape[1] != GLOBAL_DIM * _K + ACTION_DIM
+            or sd["value_mlp.0.weight"].shape[1] != GLOBAL_DIM * _K):
+        from pad_checkpoint import pad_state_dict
+        pad_state_dict(sd, _K)
+    s = ActionScorer(GLOBAL_DIM * _K, ACTION_DIM, hidden).to(device)
+    s.load_state_dict(sd)
+    for p in s.parameters():
+        p.requires_grad_(False)
+    return s
+
+
 def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
@@ -439,10 +464,18 @@ def main() -> None:
         net.load_state_dict(sd)
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
 
-    # Opponent: a fixed policy/snapshot, or a growing league pool of past snapshots.
+    # Opponent: a frozen target (exploiter mode), a fixed policy/snapshot, or a growing
+    # league pool of past snapshots (optionally seeded with frozen exploiter checkpoints).
     pool = None
-    if args.opponent == "league":
+    if args.opponent_ckpt:
+        fixed_opp = _load_frozen(args.opponent_ckpt, args.device)
+        print(f"opponent: FROZEN {args.opponent_ckpt} (best-response training; "
+              f"eval prints the exploitability read-out)")
+    elif args.opponent == "league":
         pool = [_snapshot(net, args)]  # grows over training; each iter plays a random member
+        for c in args.pool_ckpts:
+            pool.append(_load_frozen(c, args.device))
+            print(f"league pool seeded with frozen {c}")
         fixed_opp = None
     elif args.opponent == "self":
         fixed_opp = _snapshot(net, args)  # one snapshot, refreshed every snapshot-every
@@ -500,14 +533,18 @@ def main() -> None:
             wr_md = eval_winrate(net, md_eval, args, args.eval_battles, it + 1)
             wr_sm = eval_winrate(net, sm_eval, args, args.eval_battles, it + 2)
             wr_st = eval_winrate(net, st_eval, args, args.eval_battles, it + 3)
+            extra = ""
+            if args.opponent_ckpt:  # exploitability: greedy win-rate vs the frozen target
+                wr_x = eval_winrate(net, fixed_opp, args, args.eval_battles, it + 4)
+                extra = f" | vs TARGET {wr_x:5.1f}%"
             print(f"         eval (greedy) | vs random {wr_rng:5.1f}% | vs maxdmg {wr_md:5.1f}% "
-                  f"| vs smart {wr_sm:5.1f}% | vs staller {wr_st:5.1f}%")
+                  f"| vs smart {wr_sm:5.1f}% | vs staller {wr_st:5.1f}%{extra}")
             if (wr_sm + wr_st) / 2 > best_score:
                 best_score = (wr_sm + wr_st) / 2
                 torch.save(net.state_dict(), out / "pg_best.pt")
 
         if it % args.snapshot_every == 0:
-            if args.opponent == "self":
+            if args.opponent == "self" and not args.opponent_ckpt:  # frozen target never updates
                 fixed_opp.load_state_dict(net.state_dict())  # opponent catches up to the learner
             elif pool is not None:
                 pool.append(_snapshot(net, args))  # add a new league member
