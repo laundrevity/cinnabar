@@ -158,6 +158,18 @@ cinnabar/
   humans beat the agent (browser + play_cli ground truth). `--anchor mix` rotates
   smart/staller/maxdamage on anchor iters, evals print a staller line, and `pg_best.pt` is
   gated on the MEAN of smart+staller (smart-only selection bled to stallers).
+- **Exploitability is the robustness metric (2026-06-11):** `train_engine --opponent-ckpt`
+  trains a best response vs a frozen target and prints its win-rate per eval. Measured:
+  a warm-started exploiter peaked at **47.5%** vs `models_big` after 2000 dedicated iters —
+  the net is robust within its own policy class, while humans still beat it via multi-turn
+  patterns (sleep-turn exploitation, recover cycles, Explosion bait). Conclusion: the
+  remaining human gap is REPRESENTATIONAL (no memory / no opponent anticipation), not a
+  training-distribution problem.
+- **Frame-stacking probe was negative (2026-06-11):** `--frame-stack 4` now runs on the fast
+  path (`_stack_rows`, parity-tested), but a 4000-iter h128 K=4 league run warm-started from
+  the K=1 best never beat its init's smart+staller mean (final: smart 67 / staller 53 vs the
+  h256 K=1 best's 77 / 67). Caveats: capacity squeeze (672-dim input into 128 hidden), short
+  run. Don't re-run the same probe; if memory is revisited, go wider or recurrent.
 - **Expert iteration (`expert_iter.py`, v2):** `cd agent && uv run python expert_iter.py --init models_wf/pg_best.pt --rounds 5 --games 60 --gen-teams --clauses --out ei2` — self-play where both sides move by **policy-prior gated search** (`--top-k 3`), distil the **soft search distribution** (softmax over candidate Q-values, `--tau`) + outcome (value MSE) back into the net under a **KL trust-region anchor to the frozen init** (`--anchor-coef`), with the lookahead modelling the opponent as the **current policy** (`--opp-model`). v1 (hard argmax CE, heuristic opp-model, no anchor) *degraded* the policy — those three causes are exactly what v2 fixes; `--anchor-coef 0` reproduces the v1 failure, don't. `pg_best.pt` is only written when a round beats the running best on the two-opponent eval (smart + staller). Watch BOTH eval lines per round — the v1 collapse showed first vs the staller.
 
 ## Conventions
